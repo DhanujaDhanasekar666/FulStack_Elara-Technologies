@@ -1,0 +1,168 @@
+/* Professional Theme Variables - Dark Mode (Default) */
+:root {
+    /* Primary Colors - Deep Professional Blue */
+    --primary: #0f172a;           /* Slate 900 - Main background */
+    --primary-light: #1e293b;     /* Slate 800 - Lighter primary */
+    --secondary: #1e293b;         /* Slate 800 - Cards background */
+    --tertiary: #334155;          /* Slate 700 - Hover states */
+    
+    /* Accent Colors - Modern Vibrant Blue */
+    --accent-primary: #3b82f6;    /* Blue 500 - Primary accent */
+    --accent-secondary: #2563eb;  /* Blue 600 - Hover accent */
+    --accent-light: #60a5fa;      /* Blue 400 - Light accent */
+    --accent-dark: #1d4ed8;       /* Blue 700 - Dark accent */
+    
+    /* Text Colors */
+    --text-primary: #f8fafc;      /* Slate 50 - Primary text */
+    --text-secondary: #e2e8f0;    /* Slate 200 - Secondary text */
+    --text-muted: #94a3b8;        /* Slate 400 - Muted text */
+    --text-disabled: #64748b;     /* Slate 500 - Disabled text */
+    
+    /* Status Colors - Professional & Accessible */
+    --success: #10b981;           /* Emerald 500 */
+    --success-light: #34d399;     /* Emerald 400 */
+    --success-dark: #059669;      /* Emerald 600 */
+    
+    --warning: #f59e0b;           /* Amber 500 */
+    --warning-light: #fbbf24;     /* Amber 400 */
+    --warning-dark: #d97706;      /* Amber 600 */
+    
+    --danger: #ef4444;            /* Red 500 */
+    --danger-light: #f87171;      /* Red 400 */
+    --danger-dark: #dc2626;       /* Red 600 */
+    
+    --info: #06b6d4;              /* Cyan 500 */
+    --info-light: #22d3ee;        /* Cyan 400 */
+    
+    /* Surface Colors */
+    --surface-hover: #475569;     /* Slate 600 */
+    --surface-active: #1e293b;    /* Slate 800 */
+    --border-color: #334155;      /* Slate 700 */
+    --border-light: #475569;      /* Slate 600 */
+    
+    /* Shadows - Professional depth */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    --gradient-success: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    --gradient-warning: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    --gradient-danger: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    --gradient-dark: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    
+    /* Transitions */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Professional Light Mode */
+.light-mode {
+    /* Primary Colors - Clean White/Gray */
+    --primary: #ffffff;           /* White - Main background */
+    --secondary: #f8fafc;         /* Slate 50 - Cards background */
+    --tertiary: #e2e8f0;          /* Slate 200 - Hover states */
+    
+    /* Accent Colors - Vibrant but Professional */
+    --accent-primary: #3b82f6;    /* Blue 500 */
+    --accent-secondary: #2563eb;  /* Blue 600 */
+    --accent-light: #60a5fa;      /* Blue 400 */
+    --accent-dark: #1d4ed8;       /* Blue 700 */
+    
+    /* Text Colors */
+    --text-primary: #0f172a;      /* Slate 900 */
+    --text-secondary: #334155;    /* Slate 700 */
+    --text-muted: #64748b;        /* Slate 500 */
+    --text-disabled: #94a3b8;     /* Slate 400 */
+    
+    /* Status Colors - Same for consistency */
+    --success: #10b981;
+    --success-light: #34d399;
+    --success-dark: #059669;
+    
+    --warning: #f59e0b;
+    --warning-light: #fbbf24;
+    --warning-dark: #d97706;
+    
+    --danger: #ef4444;
+    --danger-light: #f87171;
+    --danger-dark: #dc2626;
+    
+    --info: #06b6d4;
+    --info-light: #22d3ee;
+    
+    /* Surface Colors */
+    --surface-hover: #f1f5f9;     /* Slate 100 */
+    --surface-active: #e2e8f0;    /* Slate 200 */
+    --border-color: #e2e8f0;      /* Slate 200 */
+    --border-light: #cbd5e1;      /* Slate 300 */
+    
+    /* Shadows - Softer for light mode */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    
+    /* Gradients - Lighter */
+    --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    --gradient-success: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    --gradient-warning: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    --gradient-danger: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    --gradient-dark: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+}
+
+/* Theme Toggle - Modern Design */
+.theme-toggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+}
+
+.theme-btn {
+    background: var(--gradient-primary);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow-lg);
+    transition: all var(--transition-base);
+    font-size: 1.25rem;
+    backdrop-filter: blur(10px);
+    position: relative;
+    overflow: hidden;
+}
+
+.theme-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(circle, rgba(255,255,255,0.2) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity var(--transition-base);
+}
+
+.theme-btn:hover::before {
+    opacity: 1;
+}
+
+.theme-btn:hover {
+    transform: scale(1.05) rotate(15deg);
+    box-shadow: var(--shadow-xl);
+}
+
+.theme-btn:active {
+    transform: scale(0.95) rotate(0deg);
+}
+
