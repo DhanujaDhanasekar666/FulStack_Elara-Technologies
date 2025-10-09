@@ -3585,6 +3585,23 @@ footer {
     background: var(--secondary);
 }
 
+/* Promotions page: widen table and ensure actions column is visible */
+.promotions-page .table-card {
+    padding-right: 1rem;
+}
+.promotions-page .table-card .table-content {
+    overflow-x: auto;
+}
+.promotions-page .table-card .data-table {
+    min-width: 1000px;
+    table-layout: auto;
+}
+.promotions-page .data-table th:last-child,
+.promotions-page .data-table td.actions {
+    white-space: nowrap;
+    width: 1%;
+}
+
 .reports-title {
     font-size: 2rem;
     font-weight: 700;

@@ -1,102 +1,33 @@
 import mongoose from 'mongoose';
 
+const ApprovalSchema = new mongoose.Schema({
+    role: { type: String, required: true },
+    user: { type: mongoose.Schema.ObjectId, ref: 'User' },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    comment: String,
+    at: Date
+}, { _id: false });
+
 const OfferSchema = new mongoose.Schema({
-    employee: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
+    candidateName: { type: String, required: true, trim: true },
+    candidateEmail: { type: String, required: true, trim: true, lowercase: true },
+    role: { type: String, required: true, trim: true },
+    grade: { type: String, trim: true },
+    department: { type: String, trim: true },
+    location: { type: String, trim: true },
+    comp: {
+        base: { type: Number, required: true },
+        variable: { type: Number, default: 0 },
+        joiningBonus: { type: Number, default: 0 },
+        perks: { type: String, default: '' }
     },
-    type: {
-        type: String,
-        enum: ['Salary Increase', 'Promotion', 'Bonus', 'Transfer', 'Role Change'],
-        required: true
-    },
-    currentPosition: {
-        type: String
-    },
-    newPosition: {
-        type: String
-    },
-    currentSalary: {
-        type: Number
-    },
-    newSalary: {
-        type: Number
-    },
-    salaryIncreasePercentage: {
-        type: Number
-    },
-    bonusAmount: {
-        type: Number
-    },
-    effectiveDate: {
-        type: Date,
-        required: true
-    },
-    description: {
-        type: String,
-        required: true
-    },
-    benefits: [{
-        type: String
-    }],
-    status: {
-        type: String,
-        enum: ['Pending', 'Approved', 'Rejected', 'Accepted', 'Declined'],
-        default: 'Pending'
-    },
-    proposedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
-    },
-    approvedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    approvedAt: {
-        type: Date
-    },
-    acceptedAt: {
-        type: Date
-    },
-    rejectionReason: {
-        type: String
-    },
-    documents: [{
-        fileName: String,
-        fileUrl: String,
-        uploadedAt: {
-            type: Date,
-            default: Date.now
-        }
-    }],
-    notes: {
-        type: String
-    }
-}, {
-    timestamps: true
-});
-
-// Indexes
-OfferSchema.index({ employee: 1 });
-OfferSchema.index({ status: 1 });
-OfferSchema.index({ type: 1 });
-
-// Calculate salary increase percentage
-OfferSchema.pre('save', function(next) {
-    if (this.type === 'Salary Increase' && this.currentSalary && this.newSalary) {
-        this.salaryIncreasePercentage = Math.round(
-            ((this.newSalary - this.currentSalary) / this.currentSalary) * 100 * 100
-        ) / 100;
-    }
-    next();
-});
+    status: { type: String, enum: ['draft', 'sent', 'accepted', 'declined', 'expired', 'withdrawn'], default: 'draft', index: true },
+    approvals: { type: [ApprovalSchema], default: [] },
+    validUntil: { type: Date },
+    letterUrl: { type: String },
+    notes: { type: String, trim: true },
+    createdBy: { type: mongoose.Schema.ObjectId, ref: 'User', required: true }
+}, { timestamps: true });
 
 export default mongoose.model('Offer', OfferSchema);
-
-
-
-
-
 

@@ -313,6 +313,72 @@ class DashboardManager {
         await refreshDisciplinaryTable();
     }
 
+    async loadOffersContent() {
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+        mainContent.innerHTML = `
+            <div class="reports-page promotions-page">
+                <div class="reports-header">
+                    <h2><i class="fas fa-level-up-alt"></i> Promotions</h2>
+                    <div class="reports-controls">
+                        <button class="btn btn-primary" onclick="dashboardManager.loadPromotionsContent()"><i class="fas fa-sync-alt"></i> Refresh</button>
+                        <button class="btn btn-secondary" onclick="openCreatePromotionModal()"><i class="fas fa-plus"></i> New Promotion</button>
+                    </div>
+                </div>
+                <div class="reports-body">
+                    <div class="tables-section">
+                        <div class="table-card full-width">
+                            <div class="table-header">
+                                <h3><i class="fas fa-arrow-up"></i> All Promotions</h3>
+                            </div>
+                            <div class="table-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Employee</th>
+                                            <th>From → To</th>
+                                            <th>CTC Δ (₹)</th>
+                                            <th>Effective</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="promotionsTableBody"><tr><td colspan="6">Loading...</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        try {
+            const data = await window.apiService.get('/promotions');
+            const list = (data.data && data.data.data) || data.data || [];
+            const rows = list.map(p => `
+                <tr>
+                    <td>${p.employee?.name || '—'} <small style="color:var(--text-muted)">${p.employee?.employeeId||''}</small></td>
+                    <td>${p.current?.role||'—'} → ${p.proposed?.role||'—'}</td>
+                    <td>₹${Number((p.proposed?.comp?.base||0) - (p.current?.comp?.base||0)).toLocaleString('en-IN')}</td>
+                    <td>${p.proposed?.effectiveDate ? new Date(p.proposed.effectiveDate).toLocaleDateString() : '—'}</td>
+                    <td><span class="status ${p.status}">${p.status.replace('_',' ')}</span></td>
+                    <td class="actions">
+                        <button class="btn-action btn-success" title="Approve" onclick="approvePromotion('${p._id}')"><i class="fas fa-check"></i></button>
+                        <button class="btn-action btn-warning" title="Reject" onclick="rejectPromotion('${p._id}')"><i class="fas fa-times"></i></button>
+                        <button class="btn-action btn-danger" title="Delete" onclick="deletePromotion('${p._id}')"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>`).join('');
+            document.getElementById('promotionsTableBody').innerHTML = rows || '<tr><td colspan="6">No promotions</td></tr>';
+        } catch(e) {
+            document.getElementById('promotionsTableBody').innerHTML = '<tr><td colspan="6">Failed to load</td></tr>';
+        }
+    }
+
+    // Backward-compat wrapper so callers can use the new Promotions page
+    async loadPromotionsContent() {
+        await this.loadOffersContent();
+    }
+
     updateUI() {
         try {
             const currentUser = this.authManager.getCurrentUser();
@@ -401,6 +467,13 @@ class DashboardManager {
         }
 
         logger.success('Sidebar menu updated');
+
+        // Ensure legacy "Offers & Promotions" is renamed and routed to Promotions
+        const legacyOffers = sidebarMenu.querySelector('a[data-page="offers"]');
+        if (legacyOffers) {
+            legacyOffers.dataset.page = 'promotions';
+            legacyOffers.innerHTML = `<i class="fas fa-level-up-alt"></i> Promotions`;
+        }
     }
 
     updateNotifications() {
@@ -602,6 +675,20 @@ class DashboardManager {
                         await this.loadDisciplinaryContent();
                     } else {
                         alert('You are not authorized to view Disciplinary records');
+                    }
+                    break;
+                case 'promotions':
+                    if ((localStorage.getItem('userRole')||'').toLowerCase() === 'hr') {
+                        await this.loadPromotionsContent();
+                    } else {
+                        alert('You are not authorized to view Promotions');
+                    }
+                    break;
+                case 'offers': // backward-compat: redirect old menu/links
+                    if ((localStorage.getItem('userRole')||'').toLowerCase() === 'hr') {
+                        await this.loadPromotionsContent();
+                    } else {
+                        alert('You are not authorized to view Promotions');
                     }
                     break;
                 case 'reports':
@@ -4434,6 +4521,175 @@ class DashboardManager {
             `;
         }
     }
+
+}
+
+// Promotions helpers (global)
+function openCreatePromotionModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="fas fa-plus-circle"></i> New Promotion</h3>
+                <button class="modal-close" onclick="closeModal(this)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Employee</label>
+                    <select id="promoEmployee" class="form-control"></select>
+                    <small id="promoEmpMeta" style="color:var(--text-muted)"></small>
+                </div>
+                <div class="form-group">
+                    <label>New Role</label>
+                    <select id="promoToRole" class="form-control"></select>
+                </div>
+                <div class="form-group">
+                    <label>Increase Amount (₹)</label>
+                    <input id="promoIncrease" type="number" class="form-control" placeholder="e.g., 10000" />
+                </div>
+                <div class="form-group">
+                    <label>Effective Date</label>
+                    <input id="promoEffective" type="date" class="form-control" />
+                </div>
+                <div class="form-group">
+                    <label>Reason</label>
+                    <input id="promoReason" class="form-control" placeholder="Reason" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal(this)">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitCreatePromotion()">Create</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    (async () => {
+        try {
+            const resp = await window.apiService.get('/users');
+            const users = (resp.data && resp.data.data) || resp.data || resp || [];
+            const select = document.getElementById('promoEmployee');
+            select.innerHTML = users.map(u => `<option value="${u._id}" data-role="${u.role||''}" data-base="${u.baseSalary||0}">${u.name} (${u.employeeId||u._id})</option>`).join('');
+            const rolesFromUsers = Array.from(new Set(users.map(u => (u.role||'').toLowerCase()).filter(Boolean)));
+            // Only include roles that exist in DB, plus core governance roles
+            let roles = Array.from(new Set([...rolesFromUsers, 'hr', 'admin', 'ceo']));
+
+            // If current user is HR, limit max target role to HR (no Admin/CEO)
+            const currentUserRole = (dashboardManager?.authManager?.getCurrentRole?.() || '').toLowerCase();
+            if (currentUserRole === 'hr') {
+                roles = roles.filter(r => r !== 'admin' && r !== 'ceo');
+            }
+            const toRole = document.getElementById('promoToRole');
+            toRole.innerHTML = roles.map(r => `<option value="${r}">${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join('');
+            const meta = document.getElementById('promoEmpMeta');
+            const updateMeta = () => {
+                const opt = select.selectedOptions[0];
+                const role = opt?.getAttribute('data-role') || '—';
+                const base = Number(opt?.getAttribute('data-base') || 0);
+                meta.textContent = `Current: Role ${role}, Base ₹${base.toLocaleString('en-IN')}`;
+            };
+            select.addEventListener('change', updateMeta);
+            updateMeta();
+        } catch(e) {
+            console.error('Failed to load users for promotions', e);
+        }
+    })();
+}
+
+async function submitCreatePromotion() {
+    const employee = document.getElementById('promoEmployee').value;
+    const toRole = document.getElementById('promoToRole').value.trim();
+    const increase = Number(document.getElementById('promoIncrease').value || 0);
+    const empOpt = document.getElementById('promoEmployee').selectedOptions[0];
+    const currentRole = empOpt?.getAttribute('data-role') || '';
+    const currentBase = Number(empOpt?.getAttribute('data-base') || 0);
+    const effective = document.getElementById('promoEffective').value;
+    const reason = document.getElementById('promoReason').value.trim();
+    if (!employee || !toRole) {
+        alert('Employee and proposed role are required');
+        return;
+    }
+    const payload = {
+        employee,
+        current: { role: currentRole || undefined, comp: { base: currentBase || 0, variable: 0 } },
+        proposed: { role: toRole, comp: { base: (currentBase + increase) || currentBase, variable: 0 }, effectiveDate: effective || undefined },
+        reason
+    };
+    try {
+        await window.apiService.post('/promotions', payload);
+        closeTopModal();
+        await dashboardManager.loadPromotionsContent();
+        alert('Promotion created');
+    } catch(e) {
+        alert('Failed to create: ' + (e.message||'Error'));
+    }
+}
+
+function closeTopModal() {
+    const overlay = document.querySelector('.modal-overlay:last-of-type');
+    if (overlay) overlay.remove();
+}
+async function approvePromotion(id) {
+    try {
+        const resp = await window.apiService.post(`/promotions/${id}/approve`);
+        const promo = (resp && resp.data && resp.data.data) || resp && resp.data || resp || null;
+
+        // Add recent activity notification (promoted/demoted)
+        if (promo) {
+            const employeeName = promo.employee?.name || 'Employee';
+            const newRole = promo.proposed?.role || 'new role';
+            const delta = Number((promo.proposed?.comp?.base || 0) - (promo.current?.comp?.base || 0));
+            const promoted = delta >= 0;
+            const title = promoted ? `Congratulations ${employeeName}!` : `${employeeName} demoted`;
+            const content = promoted ? `${employeeName} promoted to ${newRole}.` : `${employeeName} role adjusted to ${newRole}.`;
+            const announcement = {
+                id: Date.now(),
+                title,
+                content,
+                date: new Date().toISOString().split('T')[0],
+                priority: promoted ? 'high' : 'medium',
+                type: 'event'
+            };
+            if (window.sampleData && Array.isArray(window.sampleData.announcements)) {
+                window.sampleData.announcements.unshift(announcement);
+            }
+        }
+
+        await dashboardManager.loadPromotionsContent();
+
+        // Refresh recent activity on home if visible
+        const currentUser = dashboardManager?.authManager?.getCurrentUser?.() || null;
+        if (currentUser && dashboardManager.currentContent === 'home') {
+            await dashboardManager.loadHomeContent(currentUser);
+        } else {
+            dashboardManager.updateNotifications?.();
+        }
+
+        alert('Promotion approved and employee updated');
+    } catch(e) {
+        alert('Failed to approve: ' + (e.message||'Error'));
+    }
+}
+
+async function rejectPromotion(id) {
+    try {
+        await window.apiService.post(`/promotions/${id}/reject`);
+        await dashboardManager.loadPromotionsContent();
+        alert('Promotion rejected');
+    } catch(e) {
+        alert('Failed to reject: ' + (e.message||'Error'));
+    }
+}
+
+async function deletePromotion(id) {
+    if (!confirm('Delete this promotion?')) return;
+    try {
+        await window.apiService.delete(`/promotions/${id}`);
+        await dashboardManager.loadPromotionsContent();
+    } catch(e) {
+        alert('Failed to delete: ' + (e.message||'Error'));
+    }
 }
 
 // ============================================================================
@@ -7338,5 +7594,6 @@ window.AppState = AppState;
 window.DOMElements = DOMElements;
 
 logger.info('App-direct.js loaded successfully');
+
 
 

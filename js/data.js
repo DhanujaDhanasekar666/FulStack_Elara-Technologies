@@ -132,9 +132,8 @@ const menuItems = {
         { id: "employees", name: "Employees", icon: "fas fa-users" },
         { id: "leaves", name: "Leave Requests", icon: "fas fa-calendar-times" },
         { id: "disciplinary", name: "Disciplinary Records", icon: "fas fa-exclamation-triangle" },
-        { id: "offers", name: "Offers & Promotions", icon: "fas fa-handshake" },
-        { id: "payroll", name: "Payroll", icon: "fas fa-money-bill-wave" },
-        { id: "attendance", name: "Attendance", icon: "fas fa-clock" }
+        { id: "promotions", name: "Promotions", icon: "fas fa-level-up-alt" },
+        { id: "payroll", name: "Payroll", icon: "fas fa-money-bill-wave" }
     ],
     admin: [
         { id: "home", name: "Home", icon: "fas fa-home" },
