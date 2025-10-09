@@ -31,6 +31,7 @@ import taskRoutes from './routes/taskRoutes.js';
 import leaveRoutes from './routes/leaveRoutes.js';
 import payrollRoutes from './routes/payrollRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
+import disciplinaryRoutes from './routes/disciplinaryRoutes.js';
 
 // Middleware
 import errorHandler from './middleware/error.js';
@@ -116,6 +117,7 @@ app.use(`/api/${API_VERSION}/tasks`, taskRoutes);
 app.use(`/api/${API_VERSION}/leaves`, leaveRoutes);
 app.use(`/api/${API_VERSION}/payroll`, payrollRoutes);
 app.use(`/api/${API_VERSION}/analytics`, analyticsRoutes);
+app.use(`/api/${API_VERSION}/disciplinary`, disciplinaryRoutes);
 
 // Health check endpoint
 app.get(`/api/${API_VERSION}/health`, (req, res) => {

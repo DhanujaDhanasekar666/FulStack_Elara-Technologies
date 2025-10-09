@@ -125,79 +125,69 @@ class AuthManager {
             throw new Error('Please enter email and password');
         }
 
-        // Generate email candidates to try (original + swapped domain)
-        const emailCandidates = [email];
-        if (typeof email === 'string') {
-            if (email.endsWith('@elara.tech')) emailCandidates.push(email.replace('@elara.tech', '@elaratech.com'));
-            if (email.endsWith('@elaratech.com')) emailCandidates.push(email.replace('@elaratech.com', '@elara.tech'));
+        // Check for recent login attempts to prevent spam
+        const lastLoginAttempt = localStorage.getItem('lastLoginAttempt');
+        const now = Date.now();
+        if (lastLoginAttempt && (now - parseInt(lastLoginAttempt)) < 3000) {
+            throw new Error('Please wait 3 seconds before trying again');
         }
+        localStorage.setItem('lastLoginAttempt', now.toString());
 
-        // Try both authentication methods with proper fallback
-        const methods = [
-            { name: 'demo', fn: this.demoApiLogin.bind(this) },
-            { name: 'real', fn: this.realApiLogin.bind(this) }
-        ];
-
-        let lastError = null;
-        for (const candidate of emailCandidates) {
-            for (const method of methods) {
-                try {
-                    logger.info(`Attempting ${method.name} login...`, { candidate });
-                    const response = await method.fn(candidate, password);
-                    if (response && response.success && response.token) {
-                        this.storeAuthData(response, method.name);
-                        logger.success(`${method.name} login successful`);
-                        return response.user;
-                    }
-                } catch (err) {
-                    lastError = err;
-                    logger.warn(`${method.name} login failed`, err.message);
+        // Simplified login - try real API first, then demo as fallback
+        try {
+            logger.info('Attempting real API login...', { email });
+            const response = await this.realApiLogin(email, password);
+            if (response && response.success && response.token) {
+                this.storeAuthData(response, 'real');
+                logger.success('Real API login successful');
+                return response.user;
+            }
+        } catch (err) {
+            logger.warn('Real API login failed, trying demo...', err.message);
+            
+            // If rate limited, wait longer
+            if (err.message && err.message.includes('429')) {
+                logger.warn('Rate limited, waiting 5 seconds...');
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+            try {
+                logger.info('Attempting demo API login...', { email });
+                const response = await this.demoApiLogin(email, password);
+                if (response && response.success && response.token) {
+                    this.storeAuthData(response, 'demo');
+                    logger.success('Demo API login successful');
+                    return response.user;
                 }
+            } catch (demoErr) {
+                logger.error('Demo API login also failed', demoErr.message);
+                throw new Error('Login failed. Please check your credentials.');
             }
         }
 
-        throw new Error(lastError?.message || 'Login failed. Please check your credentials.');
+        throw new Error('Login failed. Please check your credentials.');
     }
 
     async realApiLogin(email, password) {
-        try {
-            const response = await window.apiService.post('/auth/login', { email, password });
-            if (!response || !response.success) {
-                throw new Error(response?.error || 'Real API login failed');
-            }
-            return response;
-        } catch (err) {
-            // If using elara.tech, retry with elaratech.com for backward compatibility
-            if (typeof email === 'string' && email.endsWith('@elara.tech')) {
-                const fallbackEmail = email.replace('@elara.tech', '@elaratech.com');
-                const response = await window.apiService.post('/auth/login', { email: fallbackEmail, password });
-                if (!response || !response.success) {
-                    throw new Error(response?.error || 'Real API login failed');
-                }
-                return response;
-            }
-            throw err;
+        const response = await window.apiService.post('/auth/login', { email, password });
+        const data = response && response.data && (response.data.token || response.data.user)
+            ? response.data
+            : response;
+        if (!data || !data.token || !data.user) {
+            throw new Error((response && response.error) || 'Real API login failed');
         }
+        return { success: true, token: data.token, user: data.user };
     }
 
     async demoApiLogin(email, password) {
-        try {
-            const response = await window.apiService.post('/auth/demo/login', { email, password });
-            if (!response || !response.success) {
-                throw new Error(response?.error || 'Demo API login failed');
-            }
-            return response;
-        } catch (err) {
-            if (typeof email === 'string' && email.endsWith('@elara.tech')) {
-                const fallbackEmail = email.replace('@elara.tech', '@elaratech.com');
-                const response = await window.apiService.post('/auth/demo/login', { email: fallbackEmail, password });
-                if (!response || !response.success) {
-                    throw new Error(response?.error || 'Demo API login failed');
-                }
-                return response;
-            }
-            throw err;
+        const response = await window.apiService.post('/auth/demo/login', { email, password });
+        const data = response && response.data && (response.data.token || response.data.user)
+            ? response.data
+            : response;
+        if (!data || !data.token || !data.user) {
+            throw new Error((response && response.error) || 'Demo API login failed');
         }
+        return { success: true, token: data.token, user: data.user };
     }
 
     storeAuthData(response, authMethod) {
@@ -272,6 +262,55 @@ class DashboardManager {
         this.authManager = authManager;
         this.currentContent = null;
         logger.info('DashboardManager initialized');
+    }
+
+    async loadDisciplinaryContent() {
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+        
+        mainContent.innerHTML = `
+            <div class="reports-page" style="max-width: 1200px; width: 100%; margin: 0 auto;">
+                <div class="reports-header">
+                    <h2><i class="fas fa-gavel"></i> Disciplinary Records</h2>
+                    <div class="reports-controls">
+                        <button class="btn btn-primary" onclick="dashboardManager.loadDisciplinaryContent()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                        <button class="btn btn-secondary" onclick="openDisciplinaryModal()">
+                            <i class="fas fa-plus"></i> Add Action
+                        </button>
+                    </div>
+                </div>
+                <div class="reports-body" style="gap: 1.5rem;">
+                    <div class="tables-section" style="grid-template-columns: 1fr;">
+                        <div class="table-card" style="overflow-x: auto;">
+                            <div class="table-header">
+                                <h3><i class="fas fa-list"></i> All Actions</h3>
+                            </div>
+                            <div class="table-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Employee</th>
+                                            <th>Type</th>
+                                            <th>Status</th>
+                                            <th>Reason</th>
+                                            <th>Action</th>
+                                            <th>Issued</th>
+                                            <th>By</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="discTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        await refreshDisciplinaryTable();
     }
 
     updateUI() {
@@ -558,6 +597,13 @@ class DashboardManager {
                 case 'payroll':
                     this.loadPayrollContent();
                     break;
+                case 'disciplinary':
+                    if ((localStorage.getItem('userRole')||'').toLowerCase() === 'hr') {
+                        await this.loadDisciplinaryContent();
+                    } else {
+                        alert('You are not authorized to view Disciplinary records');
+                    }
+                    break;
                 case 'reports':
                     this.loadReportsContent();
                     break;
@@ -649,9 +695,11 @@ class DashboardManager {
             mainContent.innerHTML = `
                 <div class="card-header">
                     <h3 class="card-title">Employee Management</h3>
-                    <button class="btn btn-primary" onclick="showAddEmployeeModal()">
-                        <i class="fas fa-plus"></i> Add Employee
-                    </button>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="showAddEmployeeModal()">
+                            <i class="fas fa-plus"></i> Add Employee
+                        </button>
+                    </div>
                 </div>
                 <div class="employee-controls">
                     <div class="search-filter-bar">
@@ -711,18 +759,9 @@ class DashboardManager {
                                     <td><span class="role-badge role-${targetUserRole}">${targetUserRole.toUpperCase()}</span></td>
                                     <td><span class="status-badge status-${(emp.status || 'active').toLowerCase()}">${emp.status || 'Active'}</span></td>
                                     <td class="actions">
-                                        <button class="btn-action btn-primary" onclick="viewEmployee('${emp._id}')" title="View Details">
+                                        <button class="btn-action btn-primary" onclick="viewEmployee('${emp._id || emp.employeeId || emp.id}')" title="View Details">
                                             <i class="fas fa-eye"></i>
                                         </button>
-                                        ${canEdit ? `
-                                            <button class="btn-action btn-success" onclick="editEmployee('${emp._id}')" title="Edit Employee">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                        ` : `
-                                            <button class="btn-action btn-secondary disabled" title="Cannot edit ${targetUserRole}" disabled>
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                        `}
                                         ${canDelete ? `
                                             <button class="btn-action btn-danger" onclick="deleteEmployee('${emp._id}', '${emp.name}')" title="Delete Employee">
                                                 <i class="fas fa-trash"></i>
@@ -1024,21 +1063,69 @@ class DashboardManager {
     }
 
     async fetchProjects() {
+        const token = localStorage.getItem('token');
+        
+        // Prefer real API when token exists; fallback to demo; finally to local/sample
+        if (token) {
+            try {
+                logger.info('Fetching projects from real MongoDB API');
+                const response = await window.apiService.get('/projects');
+                if (response && response.data) {
+                    const projects = Array.isArray(response.data) ? response.data : [response.data];
+                    window.allProjects = projects;
+                    logger.success('Fetched projects from MongoDB API:', projects.length);
+                    return projects;
+                }
+            } catch (error) {
+                logger.warn('Real API fetch failed, trying demo:', error.message);
+            }
+        }
+        
         try {
-            logger.info('Fetching projects from API...');
-            const response = await window.apiService.get('/projects');
-            
+            logger.info('Fetching projects from demo API');
+            const response = await window.apiService.get('/projects/demo');
             if (response && response.data) {
                 const projects = Array.isArray(response.data) ? response.data : [response.data];
-                logger.success('Fetched projects from API:', projects.length);
+                window.allProjects = projects;
+                logger.success('Fetched projects from demo API:', projects.length);
                 return projects;
             }
         } catch (error) {
-            logger.warn('API fetch failed, using sample data:', error.message);
+            logger.warn('Demo API fetch failed:', error.message);
         }
         
-        // Fallback to sample data
-        return sampleData.projects || [];
+        // Use local projects if available, otherwise fallback to sample data
+        if (window.allProjects && window.allProjects.length > 0) {
+            logger.info('Using local projects:', window.allProjects.length);
+            return window.allProjects;
+        }
+        
+        // Fallback to sample data if no local data
+        const projects = sampleData.projects || [];
+        window.allProjects = projects;
+        logger.info('Using sample data:', projects.length);
+        return projects;
+    }
+
+    async fetchCompanyOverview() {
+        try {
+            logger.info('Fetching company overview data...');
+            const response = await window.apiService.get('/analytics/overview');
+            if (response && response.data) {
+                logger.success('Fetched company overview from API');
+                return response.data;
+            }
+        } catch (error) {
+            logger.warn('Company overview API failed:', error.message);
+        }
+        
+        // Return sample overview data
+        return {
+            employees: { count: window.allEmployees?.length || 0, growthRate: 12 },
+            projects: { count: window.allProjects?.length || 0, completionRate: 75 },
+            revenue: { current: 2500000, growth: 8.5 },
+            satisfaction: { score: 4.2, trend: 'up' }
+        };
     }
 
     renderProjectsTable(projects) {
@@ -1580,40 +1667,804 @@ class DashboardManager {
         `;
     }
 
-    loadReportsContent() {
+    async loadReportsContent() {
+        console.log('📊 Loading Reports page...');
+        
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+
+        // Show loading
+        mainContent.innerHTML = `
+            <div class="reports-page">
+                <div class="reports-header">
+                    <h2><i class="fas fa-chart-bar"></i> Reports & Analytics</h2>
+                    <div class="reports-controls">
+                        <button class="btn btn-primary" onclick="dashboardManager.refreshReports()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="reports-body">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading reports...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        try {
+            // Get data
+            const [employees, projects, payrolls] = await Promise.all([
+                this.fetchEmployees(),
+                this.fetchProjects(),
+                this.fetchPayrolls()
+            ]);
+            
+            console.log('📊 Reports data loaded:', { 
+                employees: employees.length, 
+                projects: projects.length, 
+                payrolls: payrolls.length 
+            });
+
+            // Render reports
+            this.renderSimpleReports(employees, projects, payrolls);
+
+        } catch (error) {
+            console.error('❌ Error loading reports:', error);
+            this.showReportsError(error);
+        }
+    }
+
+    renderSimpleReports(employees, projects, payrolls) {
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+
+        // Calculate stats
+        const totalEmployees = employees.length;
+        const activeEmployees = employees.filter(emp => emp.status === 'Active').length;
+        const totalProjects = projects.length;
+        const completedProjects = projects.filter(proj => proj.status === 'Completed').length;
+        const totalPayroll = payrolls.reduce((sum, p) => sum + (p.salary?.netPay || 0), 0);
+
+        // Calculate department distribution
+        const departmentStats = {};
+        employees.forEach(emp => {
+            const dept = emp.department || 'Unknown';
+            departmentStats[dept] = (departmentStats[dept] || 0) + 1;
+        });
+
+        // Calculate project status
+        const projectStats = {};
+        projects.forEach(proj => {
+            const status = proj.status || 'Unknown';
+            projectStats[status] = (projectStats[status] || 0) + 1;
+        });
+
+        mainContent.innerHTML = `
+            <div class="reports-page">
+                <div class="reports-header">
+                    <h2><i class="fas fa-chart-bar"></i> Reports & Analytics</h2>
+                    <div class="reports-controls">
+                        <button class="btn btn-primary" onclick="dashboardManager.refreshReports()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="reports-body">
+                    <!-- Key Metrics -->
+                    <div class="metrics-grid">
+                        <div class="metric-card primary">
+                            <div class="metric-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value">${totalEmployees}</div>
+                                <div class="metric-label">Total Employees</div>
+                                <div class="metric-change positive">
+                                    <i class="fas fa-arrow-up"></i> ${activeEmployees} active
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="metric-card success">
+                            <div class="metric-icon">
+                                <i class="fas fa-project-diagram"></i>
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value">${totalProjects}</div>
+                                <div class="metric-label">Total Projects</div>
+                                <div class="metric-change positive">
+                                    <i class="fas fa-check"></i> ${completedProjects} completed
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="metric-card warning">
+                            <div class="metric-icon">
+                                <i class="fas fa-money-bill-wave"></i>
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value">₹${(totalPayroll / 100000).toFixed(1)}L</div>
+                                <div class="metric-label">Total Payroll</div>
+                                <div class="metric-change positive">
+                                    <i class="fas fa-rupee-sign"></i> Monthly
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="metric-card info">
+                            <div class="metric-icon">
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="metric-content">
+                                <div class="metric-value">${Object.keys(departmentStats).length}</div>
+                                <div class="metric-label">Departments</div>
+                                <div class="metric-change positive">
+                                    <i class="fas fa-building"></i> Active
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- Data Tables -->
+                    <div class="tables-section">
+                        <div class="table-card">
+                            <div class="table-header">
+                                <h3><i class="fas fa-users"></i> Employee Summary</h3>
+                            </div>
+                            <div class="table-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Department</th>
+                                            <th>Count</th>
+                                            <th>Active</th>
+                                            <th>Percentage</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${Object.entries(departmentStats).map(([dept, count]) => `
+                                            <tr>
+                                                <td>${dept}</td>
+                                                <td>${count}</td>
+                                                <td>${employees.filter(emp => emp.department === dept && emp.status === 'Active').length}</td>
+                                                <td>${((count / totalEmployees) * 100).toFixed(1)}%</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <div class="table-card">
+                            <div class="table-header">
+                                <h3><i class="fas fa-project-diagram"></i> Project Summary</h3>
+                            </div>
+                            <div class="table-content">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Status</th>
+                                            <th>Count</th>
+                                            <th>Percentage</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${Object.entries(projectStats).map(([status, count]) => `
+                                            <tr>
+                                                <td>${status}</td>
+                                                <td>${count}</td>
+                                                <td>${totalProjects > 0 ? ((count / totalProjects) * 100).toFixed(1) : 0}%</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Charts removed as requested
+
+        console.log('✅ Reports page rendered successfully');
+    }
+
+    showReportsError(error) {
         const mainContent = document.getElementById('mainContent');
         if (!mainContent) return;
 
         mainContent.innerHTML = `
-            <div class="card-header">
-                <h3 class="card-title">Reports & Analytics</h3>
-            </div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <i class="fas fa-chart-line fa-2x"></i>
-                    <div class="stat-value">95%</div>
-                    <div class="stat-label">Employee Satisfaction</div>
+            <div class="reports-page">
+                <div class="reports-header">
+                    <h2><i class="fas fa-chart-bar"></i> Reports & Analytics</h2>
                 </div>
-                <div class="stat-card">
-                    <i class="fas fa-chart-bar fa-2x"></i>
-                    <div class="stat-value">87%</div>
-                    <div class="stat-label">Project Success Rate</div>
-                </div>
-                <div class="stat-card">
-                    <i class="fas fa-clock fa-2x"></i>
-                    <div class="stat-value">92%</div>
-                    <div class="stat-label">Attendance Rate</div>
-                </div>
-                <div class="stat-card">
-                    <i class="fas fa-dollar-sign fa-2x"></i>
-                    <div class="stat-value">$2.1M</div>
-                    <div class="stat-label">Total Payroll</div>
+                <div class="reports-body">
+                    <div class="error">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>Error Loading Reports</h3>
+                        <p>Unable to fetch reports data. Please try again.</p>
+                        <button class="btn btn-primary" onclick="dashboardManager.loadReportsContent()">
+                            <i class="fas fa-retry"></i> Retry
+                        </button>
+                    </div>
                 </div>
             </div>
-            <p style="text-align: center; margin-top: 2rem; color: var(--text-muted);">
-                Detailed reports and analytics dashboard (Backend integration needed)
-            </p>
         `;
+    }
+
+
+    renderReportsContent(overviewData, employees, projects, payrolls) {
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+
+        // Calculate additional metrics
+        const totalEmployees = employees.length;
+        const activeEmployees = employees.filter(emp => emp.status === 'Active').length;
+        const totalProjects = projects.length;
+        const completedProjects = projects.filter(proj => proj.status === 'Completed').length;
+        const totalPayroll = payrolls.reduce((sum, payroll) => sum + (payroll.salary?.netPay || 0), 0);
+        const avgSalary = totalEmployees > 0 ? totalPayroll / totalEmployees : 0;
+
+        // Department distribution
+        const departmentStats = employees.reduce((acc, emp) => {
+            const dept = emp.department || 'Unknown';
+            acc[dept] = (acc[dept] || 0) + 1;
+            return acc;
+        }, {});
+
+        // Project status distribution
+        const projectStats = projects.reduce((acc, proj) => {
+            const status = proj.status || 'Unknown';
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+        }, {});
+
+        mainContent.innerHTML = `
+            <div class="reports-container">
+                <div class="reports-header">
+                    <h2 class="reports-title">
+                        <i class="fas fa-chart-bar"></i>
+                        Reports & Analytics
+                    </h2>
+                    <div class="reports-controls">
+                        <div class="date-range-selector">
+                            <label for="dateRange">Period:</label>
+                            <select id="dateRange" onchange="dashboardManager.updateReportsPeriod(this.value)">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="365">Last year</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" onclick="dashboardManager.exportReports()">
+                            <i class="fas fa-download"></i> Export
+                        </button>
+                        <button class="btn btn-secondary" onclick="dashboardManager.refreshReports()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Key Metrics Grid -->
+                <div class="reports-metrics-grid">
+                    <div class="metric-card primary">
+                        <div class="metric-icon">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value">${totalEmployees}</div>
+                            <div class="metric-label">Total Employees</div>
+                            <div class="metric-change positive">
+                                <i class="fas fa-arrow-up"></i> ${overviewData.employees?.growthRate || 12}% growth
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metric-card success">
+                        <div class="metric-icon">
+                            <i class="fas fa-project-diagram"></i>
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value">${totalProjects}</div>
+                            <div class="metric-label">Total Projects</div>
+                            <div class="metric-change positive">
+                                <i class="fas fa-check-circle"></i> ${completedProjects} completed
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metric-card warning">
+                        <div class="metric-icon">
+                            <i class="fas fa-rupee-sign"></i>
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value">₹${(totalPayroll / 100000).toFixed(1)}L</div>
+                            <div class="metric-label">Total Payroll</div>
+                            <div class="metric-change">
+                                <i class="fas fa-info-circle"></i> Avg: ₹${avgSalary.toLocaleString()}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="metric-card info">
+                        <div class="metric-icon">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="metric-content">
+                            <div class="metric-value">${overviewData.projects?.completionRate || 75}%</div>
+                            <div class="metric-label">Success Rate</div>
+                            <div class="metric-change positive">
+                                <i class="fas fa-trending-up"></i> Project completion
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="reports-charts-grid">
+                    <!-- Project Status -->
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-tasks"></i> Project Status</h3>
+                            <div class="chart-actions">
+                                <button class="btn-icon" onclick="dashboardManager.toggleChartType('projectStatusChart')" title="Toggle Chart Type">
+                                    <i class="fas fa-exchange-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="projectStatusChart"></canvas>
+                        </div>
+                        <div class="chart-summary">
+                            ${Object.entries(projectStats).map(([status, count]) => 
+                                `<div class="summary-item">
+                                    <span class="summary-label">${status}</span>
+                                    <span class="summary-value">${count} projects</span>
+                                </div>`
+                            ).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Payroll Analysis -->
+                    <div class="chart-card full-width">
+                        <div class="chart-header">
+                            <h3><i class="fas fa-rupee-sign"></i> Payroll Analysis</h3>
+                            <div class="chart-actions">
+                                <button class="btn-icon" onclick="dashboardManager.toggleChartType('payrollChart')" title="Toggle Chart Type">
+                                    <i class="fas fa-exchange-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="payrollChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed Tables -->
+                <div class="reports-tables-grid">
+                    <!-- Top Performers -->
+                    <div class="table-card">
+                        <div class="table-header">
+                            <h3><i class="fas fa-trophy"></i> Top Performers</h3>
+                            <button class="btn btn-sm btn-outline" onclick="dashboardManager.viewAllPerformers()">View All</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="reports-table">
+                                <thead>
+                                    <tr>
+                                        <th>Employee</th>
+                                        <th>Department</th>
+                                        <th>Projects</th>
+                                        <th>Performance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${employees.slice(0, 5).map(emp => `
+                                        <tr>
+                                            <td>
+                                                <div class="employee-info">
+                                                    <div class="employee-avatar">
+                                                        <i class="fas fa-user"></i>
+                                                    </div>
+                                                    <div class="employee-details">
+                                                        <div class="employee-name">${emp.name}</div>
+                                                        <div class="employee-role">${emp.position}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td><span class="department-badge">${emp.department}</span></td>
+                                            <td>${Math.floor(Math.random() * 5) + 1}</td>
+                                            <td>
+                                                <div class="performance-bar">
+                                                    <div class="performance-fill" style="width: ${Math.floor(Math.random() * 30) + 70}%"></div>
+                                                    <span class="performance-text">${Math.floor(Math.random() * 30) + 70}%</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activities -->
+                    <div class="table-card">
+                        <div class="table-header">
+                            <h3><i class="fas fa-history"></i> Recent Activities</h3>
+                            <button class="btn btn-sm btn-outline" onclick="dashboardManager.viewAllActivities()">View All</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="reports-table">
+                                <thead>
+                                    <tr>
+                                        <th>Activity</th>
+                                        <th>User</th>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${this.generateRecentActivities(employees, projects).map(activity => `
+                                        <tr>
+                                            <td>
+                                                <div class="activity-info">
+                                                    <i class="${activity.icon}"></i>
+                                                    <span>${activity.description}</span>
+                                                </div>
+                                            </td>
+                                            <td>${activity.user}</td>
+                                            <td>${activity.time}</td>
+                                            <td><span class="status-badge status-${activity.status.toLowerCase()}">${activity.status}</span></td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Initialize charts after DOM is ready
+        setTimeout(() => {
+            this.initializeReportsCharts(departmentStats, projectStats, employees, payrolls);
+        }, 100);
+    }
+
+    generateRecentActivities(employees, projects) {
+        const activities = [];
+        
+        // Add recent employee activities
+        employees.slice(0, 3).forEach(emp => {
+            activities.push({
+                icon: 'fas fa-user-plus',
+                description: `New employee ${emp.name} joined`,
+                user: emp.name,
+                time: '2 hours ago',
+                status: 'Completed'
+            });
+        });
+
+        // Add recent project activities
+        projects.slice(0, 2).forEach(proj => {
+            activities.push({
+                icon: 'fas fa-project-diagram',
+                description: `Project "${proj.name}" updated`,
+                user: 'System',
+                time: '1 day ago',
+                status: 'In Progress'
+            });
+        });
+
+        return activities.slice(0, 5);
+    }
+
+    renderReportsError(error) {
+        const mainContent = document.getElementById('mainContent');
+        if (!mainContent) return;
+
+        mainContent.innerHTML = `
+            <div class="reports-container">
+                <div class="reports-header">
+                    <h2 class="reports-title">
+                        <i class="fas fa-chart-bar"></i>
+                        Reports & Analytics
+                    </h2>
+                </div>
+                <div class="error-state">
+                    <div class="error-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <h3>Failed to Load Reports</h3>
+                    <p>Unable to fetch analytics data. Please check your connection and try again.</p>
+                    <button class="btn btn-primary" onclick="dashboardManager.loadReportsContent()">
+                        <i class="fas fa-retry"></i> Retry
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    // Initialize charts for reports page
+    initializeReportsCharts(departmentStats, projectStats, employees, payrolls) {
+        try {
+            // Project Status Chart
+            this.createProjectStatusChart(projectStats);
+            
+            // Payroll Analysis Chart
+            this.createPayrollAnalysisChart(payrolls);
+        } catch (error) {
+            logger.error('Failed to initialize reports charts:', error);
+        }
+    }
+
+    createDepartmentDistributionChart(departmentStats) {
+        console.log('Creating department distribution chart with data:', departmentStats);
+        
+        const ctx = document.getElementById('departmentChart');
+        if (!ctx) {
+            console.error('Department chart canvas not found');
+            return;
+        }
+
+        console.log('Canvas element found:', ctx);
+        console.log('Canvas dimensions:', ctx.offsetWidth, 'x', ctx.offsetHeight);
+
+        const labels = Object.keys(departmentStats);
+        const data = Object.values(departmentStats);
+        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16'];
+
+        console.log('Chart data:', { labels, data });
+
+        try {
+            const chart = new Chart(ctx.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colors.slice(0, labels.length),
+                        borderWidth: 2,
+                        borderColor: '#1f2937'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#d1d5db',
+                                font: { size: 12 }
+                            }
+                        }
+                    }
+                }
+            });
+            console.log('Department chart created successfully');
+        } catch (error) {
+            console.error('Error creating department chart:', error);
+        }
+    }
+
+    createProjectStatusChart(projectStats) {
+        const ctx = document.getElementById('projectStatusChart');
+        if (!ctx) return;
+
+        const labels = Object.keys(projectStats);
+        const data = Object.values(projectStats);
+        const colors = {
+            'Completed': '#10b981',
+            'In Progress': '#3b82f6',
+            'Pending': '#f59e0b',
+            'On Hold': '#ef4444'
+        };
+
+        new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: labels.map(label => colors[label] || '#6b7280'),
+                    borderWidth: 1,
+                    borderColor: '#374151'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    createEmployeeGrowthChart(employees) {
+        console.log('Creating employee growth chart with employees:', employees.length);
+        
+        const ctx = document.getElementById('employeeGrowthChart');
+        if (!ctx) {
+            console.error('Employee growth chart canvas not found');
+            return;
+        }
+
+        console.log('Growth chart canvas element found:', ctx);
+        console.log('Growth chart canvas dimensions:', ctx.offsetWidth, 'x', ctx.offsetHeight);
+
+        // Generate mock growth data for the last 12 months
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const growthData = [];
+        let currentCount = Math.max(1, employees.length - 5);
+        
+        for (let i = 0; i < 12; i++) {
+            currentCount += Math.floor(Math.random() * 3);
+            growthData.push(currentCount);
+        }
+
+        console.log('Growth chart data:', { months, growthData });
+
+        try {
+            const chart = new Chart(ctx.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Employee Count',
+                        data: growthData,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#d1d5db' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#d1d5db' },
+                            grid: { color: '#374151' }
+                        },
+                        x: {
+                            ticks: { color: '#d1d5db' },
+                            grid: { color: '#374151' }
+                        }
+                    }
+                }
+            });
+            console.log('Employee growth chart created successfully');
+        } catch (error) {
+            console.error('Error creating employee growth chart:', error);
+        }
+    }
+
+    createPayrollAnalysisChart(payrolls) {
+        const ctx = document.getElementById('payrollChart');
+        if (!ctx) return;
+
+        // Generate monthly payroll data
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const payrollData = months.map(() => Math.floor(Math.random() * 500000) + 2000000);
+
+        new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: months,
+                datasets: [{
+                    label: 'Monthly Payroll (₹)',
+                    data: payrollData,
+                    backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                    borderColor: '#10b981',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { 
+                            color: '#d1d5db',
+                            callback: function(value) {
+                                return '₹' + (value / 100000).toFixed(1) + 'L';
+                            }
+                        },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Reports helper methods
+    updateReportsPeriod(days) {
+        logger.info('Updating reports period:', days);
+        // Refresh reports with new period
+        this.loadReportsContent();
+    }
+
+    exportReports() {
+        logger.info('Exporting reports...');
+        // Create a simple CSV export
+        const csvContent = this.generateReportsCSV();
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `reports_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    generateReportsCSV() {
+        const headers = ['Metric', 'Value', 'Date'];
+        const rows = [
+            ['Total Employees', window.allEmployees?.length || 0, new Date().toISOString()],
+            ['Total Projects', window.allProjects?.length || 0, new Date().toISOString()],
+            ['Total Payroll', '₹' + (window.allPayrolls?.reduce((sum, p) => sum + (p.salary?.netPay || 0), 0) || 0), new Date().toISOString()]
+        ];
+        
+        return [headers, ...rows].map(row => row.join(',')).join('\n');
+    }
+
+    refreshReports() {
+        logger.info('Refreshing reports...');
+        this.loadReportsContent();
+    }
+
+    toggleChartType(chartId) {
+        logger.info('Toggling chart type for:', chartId);
+        // This would toggle between different chart types (bar, line, pie, etc.)
+        // For now, just refresh the chart
+        this.loadReportsContent();
+    }
+
+    viewAllPerformers() {
+        logger.info('Viewing all performers...');
+        // Navigate to employees page with performance filter
+        this.loadContent('employees');
+    }
+
+    viewAllActivities() {
+        logger.info('Viewing all activities...');
+        // Navigate to notifications page
+        this.loadContent('notifications');
     }
 
     loadDefaultContent(page) {
@@ -1878,208 +2729,704 @@ class DashboardManager {
     }
 
     async loadCompanyOverviewContent() {
+        console.log('🚀 Loading Company Overview...');
+        
         const mainContent = document.getElementById('mainContent');
-        if (!mainContent) return;
+        if (!mainContent) {
+            console.error('❌ Main content not found');
+            return;
+        }
 
-        // Show loading state
+        // Show loading
         mainContent.innerHTML = `
-            <div class="overview-container">
+            <div class="company-overview">
                 <div class="overview-header">
-                    <h2 class="overview-title">
-                        <i class="fas fa-chart-line"></i>
-                        Company Overview & Analytics
-                    </h2>
-                    <div class="overview-controls">
-                        <button class="btn btn-secondary" id="exportDataBtn" disabled>
-                            <i class="fas fa-download"></i> Export Data
-                        </button>
-                        <button class="btn btn-primary" id="refreshChartsBtn" disabled>
-                            <i class="fas fa-sync-alt"></i> Refresh
-                        </button>
-                    </div>
+                    <h2><i class="fas fa-chart-line"></i> Company Overview</h2>
+                    <button class="btn btn-primary" onclick="dashboardManager.loadCompanyOverviewContent()">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
                 </div>
-                
-                <div class="loading-container">
-                    <div class="loading-spinner"></div>
-                    <p>Loading company analytics...</p>
+                <div class="overview-body">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading data...</p>
+                    </div>
                 </div>
             </div>
         `;
 
         try {
-            // Fetch real data from database
-            const overviewData = await this.fetchCompanyOverview();
+            // Get data
+            const employees = await this.fetchEmployees();
+            const projects = await this.fetchProjects();
             
-            if (!overviewData) {
-                throw new Error('Failed to fetch company data');
-            }
+            console.log('📊 Data loaded:', { employees: employees.length, projects: projects.length });
 
-            // Render the page with real data
+            // Calculate stats
+            const departmentStats = {};
+            employees.forEach(emp => {
+                const dept = emp.department || 'Unknown';
+                departmentStats[dept] = (departmentStats[dept] || 0) + 1;
+            });
+
+            // Render page
             mainContent.innerHTML = `
-                <div class="overview-container">
+                <div class="company-overview">
                     <div class="overview-header">
-                        <h2 class="overview-title">
-                            <i class="fas fa-chart-line"></i>
-                            Company Overview & Analytics
-                        </h2>
-                        <div class="overview-controls">
-                            <button class="btn btn-secondary" id="exportDataBtn">
-                                <i class="fas fa-download"></i> Export Data
-                            </button>
-                            <button class="btn btn-primary" id="refreshChartsBtn">
-                                <i class="fas fa-sync-alt"></i> Refresh
-                            </button>
-                        </div>
+                        <h2><i class="fas fa-chart-line"></i> Company Overview</h2>
+                        <button class="btn btn-primary" onclick="dashboardManager.loadCompanyOverviewContent()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
                     </div>
-                    
-                    <!-- Key Metrics Cards -->
-                    <div class="metrics-grid">
-                        <div class="metric-card revenue">
-                            <div class="metric-icon">
-                                <i class="fas fa-dollar-sign"></i>
+                    <div class="overview-body">
+                        <div class="charts-row">
+                            <div class="chart-box">
+                                <h3><i class="fas fa-building"></i> Department Distribution</h3>
+                                <div class="chart-wrapper">
+                                    <canvas id="deptChart" width="400" height="300"></canvas>
+                                </div>
                             </div>
-                            <div class="metric-info">
-                                <h3>$${(overviewData.payroll.monthlyRevenue / 1000).toFixed(0)}K</h3>
-                                <p>Monthly Revenue</p>
-                                <span class="metric-change positive">Real-time</span>
+                            <div class="chart-box">
+                                <h3><i class="fas fa-users"></i> Employee Growth</h3>
+                                <div class="chart-wrapper">
+                                    <canvas id="growthChart" width="400" height="300"></canvas>
+                                </div>
                             </div>
                         </div>
-                        <div class="metric-card projects">
-                            <div class="metric-icon">
-                                <i class="fas fa-project-diagram"></i>
-                            </div>
-                            <div class="metric-info">
-                                <h3>${overviewData.projects.active}</h3>
-                                <p>Active Projects</p>
-                                <span class="metric-change ${overviewData.projects.completionRate > 70 ? 'positive' : 'negative'}">${overviewData.projects.completionRate}% Complete</span>
-                            </div>
-                        </div>
-                        <div class="metric-card employees">
-                            <div class="metric-icon">
-                                <i class="fas fa-users"></i>
-                            </div>
-                            <div class="metric-info">
-                                <h3>${overviewData.employees.total}</h3>
-                                <p>Team Members</p>
-                                <span class="metric-change positive">+${overviewData.employees.newThisMonth} this month</span>
-                            </div>
-                        </div>
-                        <div class="metric-card satisfaction">
-                            <div class="metric-icon">
-                                <i class="fas fa-chart-line"></i>
-                            </div>
-                            <div class="metric-info">
-                                <h3>${overviewData.attendance.percentage}%</h3>
-                                <p>Attendance Rate</p>
-                                <span class="metric-change ${overviewData.attendance.percentage > 85 ? 'positive' : 'negative'}">Live Data</span>
-                            </div>
-                        </div>
-                    </div>
-                
-                <!-- Charts Grid -->
-                <div class="charts-grid">
-                    <!-- Revenue Growth Chart -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-chart-area"></i> Revenue Growth</h3>
-                            <span class="chart-period">Last 10 Months</span>
-                        </div>
-                        <canvas id="revenueChart"></canvas>
-                    </div>
-                    
-                    <!-- Project Status Chart -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-tasks"></i> Project Status</h3>
-                            <span class="chart-period">Current Distribution</span>
-                        </div>
-                        <canvas id="projectStatusChart"></canvas>
-                    </div>
-                    
-                    <!-- Employee Performance Chart -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-user-check"></i> Employee Metrics</h3>
-                            <span class="chart-period">Performance Indicators</span>
-                        </div>
-                        <canvas id="employeeMetricsChart"></canvas>
-                    </div>
-                    
-                    <!-- Budget Allocation Chart -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-chart-pie"></i> Budget Allocation</h3>
-                            <span class="chart-period">Department Wise</span>
-                        </div>
-                        <canvas id="budgetChart"></canvas>
-                    </div>
-                    
-                    <!-- Company Growth Timeline -->
-                    <div class="chart-container large">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-trending-up"></i> Company Growth Timeline</h3>
-                            <span class="chart-period">Quarterly Progress</span>
-                        </div>
-                        <canvas id="growthChart"></canvas>
-                    </div>
-                    
-                    <!-- Task Completion Rate -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-check-circle"></i> Task Completion</h3>
-                            <span class="chart-period">Weekly Performance</span>
-                        </div>
-                        <canvas id="taskChart"></canvas>
-                    </div>
-                    
-                    <!-- Customer Satisfaction Trend -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-smile"></i> Customer Satisfaction</h3>
-                            <span class="chart-period">Monthly Trend</span>
-                        </div>
-                        <canvas id="satisfactionChart"></canvas>
-                    </div>
-                    
-                    <!-- Technology Stack -->
-                    <div class="chart-container">
-                        <div class="chart-header">
-                            <h3><i class="fas fa-code"></i> Technology Stack</h3>
-                            <span class="chart-period">Usage Statistics</span>
-                        </div>
-                        <canvas id="techStackChart"></canvas>
                     </div>
                 </div>
-            </div>
-        `;
-        
-            await this.initializeRealCharts();
-            this.initializeOverviewControls();
-            
+            `;
+
+            // Wait for DOM
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+            // Create charts
+            this.createSimpleDepartmentChart(departmentStats);
+            this.createSimpleGrowthChart(employees);
+
+            console.log('✅ Company Overview loaded successfully');
+
         } catch (error) {
-            logger.error('Failed to load company overview:', error);
+            console.error('❌ Error loading overview:', error);
             mainContent.innerHTML = `
-                <div class="overview-container">
-                    <div class="error-container">
-                        <i class="fas fa-exclamation-triangle fa-3x"></i>
-                        <h3>Failed to Load Analytics</h3>
-                        <p>Unable to fetch company data. Please check your connection and try again.</p>
-                        <button class="btn btn-primary" onclick="dashboardManager.loadCompanyOverviewContent()">
-                            <i class="fas fa-retry"></i> Retry
-                        </button>
+                <div class="company-overview">
+                    <div class="overview-header">
+                        <h2><i class="fas fa-chart-line"></i> Company Overview</h2>
+                    </div>
+                    <div class="overview-body">
+                        <div class="error">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <h3>Error Loading Data</h3>
+                            <p>Please try again later.</p>
+                            <button class="btn btn-primary" onclick="dashboardManager.loadCompanyOverviewContent()">
+                                <i class="fas fa-retry"></i> Retry
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
         }
     }
 
-    async fetchCompanyOverview() {
+    // Simple chart functions
+    createSimpleDepartmentChart(departmentStats) {
+        console.log('📊 Creating department chart...');
+        
+        const canvas = document.getElementById('deptChart');
+        if (!canvas) {
+            console.error('❌ Canvas not found');
+            return;
+        }
+
+        const ctx = canvas.getContext('2d');
+        const labels = Object.keys(departmentStats);
+        const data = Object.values(departmentStats);
+        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+
         try {
-            const response = await window.apiService.get('/analytics/overview');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colors.slice(0, labels.length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#374151',
+                                font: { size: 12 }
+                            }
+                        }
+                    }
+                }
+            });
+            console.log('✅ Department chart created');
+        } catch (error) {
+            console.error('❌ Chart error:', error);
+        }
+    }
+
+    createSimpleGrowthChart(employees) {
+        console.log('📈 Creating growth chart...');
+        
+        const canvas = document.getElementById('growthChart');
+        if (!canvas) {
+            console.error('❌ Canvas not found');
+            return;
+        }
+
+        const ctx = canvas.getContext('2d');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const growthData = [];
+        let count = Math.max(1, employees.length - 5);
+        
+        for (let i = 0; i < 12; i++) {
+            count += Math.floor(Math.random() * 3);
+            growthData.push(count);
+        }
+
+        try {
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: months,
+                    datasets: [{
+                        label: 'Employee Count',
+                        data: growthData,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#374151' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#6b7280' },
+                            grid: { color: '#e5e7eb' }
+                        },
+                        x: {
+                            ticks: { color: '#6b7280' },
+                            grid: { color: '#e5e7eb' }
+                        }
+                    }
+                }
+            });
+            console.log('✅ Growth chart created');
+        } catch (error) {
+            console.error('❌ Chart error:', error);
+        }
+    }
+
+    // Helper method to add delays between API calls
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // Legacy function - keeping for compatibility but not used in new implementation
+
+    // Create Department Distribution Chart
+    createDepartmentChart(data) {
+        const ctx = document.getElementById('departmentChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: data.labels || ['Engineering', 'HR', 'Marketing', 'Sales', 'Finance'],
+                datasets: [{
+                    data: data.values || [15, 5, 8, 12, 6],
+                    backgroundColor: data.colors || ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'],
+                    borderWidth: 2,
+                    borderColor: '#1f2937'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#d1d5db',
+                            font: { size: 12 }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Create Project Status Chart
+    createProjectStatusChart(data) {
+        const ctx = document.getElementById('projectStatusChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.labels || ['Active', 'Completed', 'Planning', 'On Hold'],
+                datasets: [{
+                    label: 'Projects',
+                    data: data.values || [8, 12, 3, 2],
+                    backgroundColor: data.colors || ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
+                    borderWidth: 1,
+                    borderColor: '#374151'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Create Task Trends Chart
+    createTaskTrendsChart(data) {
+        const ctx = document.getElementById('taskTrendsChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels || ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6', 'Week 7', 'Week 8'],
+                datasets: [
+                    {
+                        label: 'Completed Tasks',
+                        data: data.completed || [12, 19, 15, 25, 22, 30, 28, 35],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Total Tasks',
+                        data: data.total || [20, 25, 22, 30, 28, 35, 32, 40],
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Create Revenue Growth Chart
+    createRevenueGrowthChart(data) {
+        const ctx = document.getElementById('revenueGrowthChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+                datasets: [{
+                    label: 'Revenue (₹L)',
+                    data: data.revenue || [45, 52, 48, 61, 55, 67, 72, 68, 75, 82, 78, 85],
+                    borderColor: '#8b5cf6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { 
+                            color: '#d1d5db',
+                            callback: function(value) {
+                                return '₹' + value + 'L';
+                            }
+                        },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Fetch chart data methods
+    async fetchDepartmentDistribution() {
+        try {
+            const response = await window.apiService.get('/analytics/department-distribution');
             return response.data;
         } catch (error) {
-            logger.error('Failed to fetch company overview:', error);
+            logger.warn('Failed to fetch department data:', error);
             return null;
+        }
+    }
+
+    async fetchProjectStatus() {
+        try {
+            const response = await window.apiService.get('/analytics/project-status');
+            return response.data;
+        } catch (error) {
+            logger.warn('Failed to fetch project status data:', error);
+            return null;
+        }
+    }
+
+    async fetchTaskTrends() {
+        try {
+            const response = await window.apiService.get('/analytics/task-trends');
+            return response.data;
+        } catch (error) {
+            logger.warn('Failed to fetch task trends data:', error);
+            return null;
+        }
+    }
+
+    async fetchRevenueGrowth() {
+        try {
+            const response = await window.apiService.get('/analytics/revenue-growth');
+            return response.data;
+        } catch (error) {
+            logger.warn('Failed to fetch revenue growth data:', error);
+            return null;
+        }
+    }
+
+    // Create sample charts when user doesn't have permission or data is unavailable
+    createSampleCharts() {
+        console.log('Creating sample charts...');
+        this.createSampleDepartmentChart();
+        this.createSampleEmployeeGrowthChart();
+    }
+
+    createSampleDepartmentChart() {
+        console.log('Creating sample department chart...');
+        const ctx = document.getElementById('departmentChart');
+        if (!ctx) {
+            console.error('Sample department chart canvas not found');
+            return;
+        }
+        
+        console.log('Sample department chart canvas found:', ctx);
+        
+        try {
+            const chart = new Chart(ctx.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Engineering', 'HR', 'Marketing', 'Sales', 'Finance'],
+                    datasets: [{
+                        data: [15, 5, 8, 12, 6],
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'],
+                        borderWidth: 2,
+                        borderColor: '#1f2937'
+                    }]
+                },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#d1d5db',
+                            font: { size: 12 }
+                        }
+                    }
+                }
+            }
+        });
+        
+        console.log('Sample department chart created successfully:', chart);
+        return chart;
+    } catch (error) {
+        console.error('Error creating sample department chart:', error);
+        throw error;
+    }
+}
+
+    createSampleProjectStatusChart() {
+        const ctx = document.getElementById('projectStatusChart');
+        if (!ctx) return;
+        
+        new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: ['Active', 'Completed', 'Planning', 'On Hold'],
+                datasets: [{
+                    label: 'Projects',
+                    data: [8, 12, 3, 2],
+                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
+                    borderWidth: 1,
+                    borderColor: '#374151'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    createSampleTaskTrendsChart() {
+        const ctx = document.getElementById('taskTrendsChart');
+        if (!ctx) return;
+        
+        new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6', 'Week 7', 'Week 8'],
+                datasets: [
+                    {
+                        label: 'Completed Tasks',
+                        data: [12, 19, 15, 25, 22, 30, 28, 35],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Total Tasks',
+                        data: [20, 25, 22, 30, 28, 35, 32, 40],
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    createSampleEmployeeGrowthChart() {
+        console.log('Creating sample employee growth chart...');
+        const ctx = document.getElementById('employeeGrowthChart');
+        if (!ctx) {
+            console.error('Sample employee growth chart canvas not found');
+            return;
+        }
+        
+        console.log('Sample employee growth chart canvas found:', ctx);
+        
+        try {
+            const chart = new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                datasets: [{
+                    label: 'Employee Count',
+                    data: [20, 22, 25, 28, 30, 32],
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+        
+        console.log('Sample employee growth chart created successfully:', chart);
+        return chart;
+    } catch (error) {
+        console.error('Error creating sample employee growth chart:', error);
+        throw error;
+    }
+}
+
+    createSamplePayrollChart() {
+        const ctx = document.getElementById('payrollChart');
+        if (!ctx) return;
+        
+        new Chart(ctx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                datasets: [{
+                    label: 'Monthly Payroll (₹L)',
+                    data: [25, 28, 30, 32, 35, 38],
+                    backgroundColor: 'rgba(16, 185, 129, 0.8)',
+                    borderColor: '#10b981',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#d1d5db' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { 
+                            color: '#d1d5db',
+                            callback: function(value) {
+                                return '₹' + value + 'L';
+                            }
+                        },
+                        grid: { color: '#374151' }
+                    },
+                    x: {
+                        ticks: { color: '#d1d5db' },
+                        grid: { color: '#374151' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Initialize refresh functionality for overview
+    initializeOverviewRefresh() {
+        const refreshBtn = document.getElementById('refreshOverviewBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+                refreshBtn.disabled = true;
+                
+                try {
+                    await this.loadCompanyOverviewContent();
+                } catch (error) {
+                    logger.error('Failed to refresh overview:', error);
+                } finally {
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+                    refreshBtn.disabled = false;
+                }
+            });
+        }
+    }
+
+    // Start auto-refresh for overview
+    startAutoRefresh() {
+        // Clear any existing interval
+        if (this.overviewRefreshInterval) {
+            clearInterval(this.overviewRefreshInterval);
+        }
+        
+        // Set up new interval (5 minutes to prevent 429 errors)
+        this.overviewRefreshInterval = setInterval(async () => {
+            try {
+                // Only refresh if we're currently viewing the overview
+                if (this.currentContent === 'overview') {
+                    await this.loadCompanyOverviewContent();
+                }
+            } catch (error) {
+                logger.error('Auto-refresh failed:', error);
+                // Stop auto-refresh if we get rate limited
+                if (error.message && error.message.includes('429')) {
+                    clearInterval(this.overviewRefreshInterval);
+                    logger.warn('Auto-refresh stopped due to rate limiting');
+                }
+            }
+        }, 300000); // 5 minutes to prevent rate limiting
+    }
+
+    // Stop auto-refresh
+    stopAutoRefresh() {
+        if (this.overviewRefreshInterval) {
+            clearInterval(this.overviewRefreshInterval);
+            this.overviewRefreshInterval = null;
         }
     }
 
@@ -3353,6 +4700,18 @@ function initializeLogin() {
             return;
         }
         
+        // Prevent multiple submissions
+        const submitBtn = DOMElements.loginForm.querySelector('button[type="submit"]');
+        if (submitBtn && submitBtn.disabled) {
+            logger.warn('Login already in progress');
+            return;
+        }
+        
+        // Show loading state
+        const originalText = submitBtn.textContent;
+        submitBtn.textContent = 'Logging in...';
+        submitBtn.disabled = true;
+        
         try {
             logger.info('Attempting login...', { email });
             
@@ -3387,6 +4746,12 @@ function initializeLogin() {
                 stack: error.stack 
             });
             alert(`Login failed: ${error.message}`);
+        } finally {
+            // Restore button state
+            if (submitBtn) {
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            }
         }
     });
     
@@ -3890,10 +5255,180 @@ async function testAPIConnection() {
     }
 }
 
+// ============================================================================
+// DISCIPLINARY ACTIONS (HR/Admin/CEO)
+// ============================================================================
+async function fetchDisciplinary(params = {}) {
+    const response = await window.apiService.get('/disciplinary', params);
+    return response.data || response;
+}
+
+async function createDisciplinary(payload) {
+    const response = await window.apiService.post('/disciplinary', payload);
+    return response.data || response;
+}
+
+async function updateDisciplinaryRecord(id, payload) {
+    const response = await window.apiService.put(`/disciplinary/${id}`, payload);
+    return response.data || response;
+}
+
+async function deleteDisciplinaryRecord(id) {
+    const response = await window.apiService.delete(`/disciplinary/${id}`);
+    return response.data || response;
+}
+
+function openDisciplinaryModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-container" style="max-width:720px">
+            <div class="modal-header">
+                <h3><i class="fas fa-gavel"></i> Add Disciplinary Action</h3>
+                <button class="modal-close" onclick="closeModal(this)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-row" style="gap:1rem">
+                    <div class="form-group" style="flex:1">
+                        <label>Employee</label>
+                        <select id="discEmployee"></select>
+                    </div>
+                    <div class="form-group" style="width:180px">
+                        <label>Type</label>
+                        <select id="discType">
+                            <option value="warning">Warning</option>
+                            <option value="probation">Probation</option>
+                            <option value="suspension">Suspension</option>
+                            <option value="termination">Termination</option>
+                            <option value="notice">Notice</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="width:180px">
+                        <label>Status</label>
+                        <select id="discStatus">
+                            <option value="open" selected>Open</option>
+                            <option value="in_review">In Review</option>
+                            <option value="closed">Closed</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row" style="gap:1rem">
+                    <div class="form-group" style="flex:1">
+                        <label>Reason</label>
+                        <input id="discReason" placeholder="Short reason (e.g., Code of conduct)" />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Action</label>
+                        <textarea id="discAction" rows="2" placeholder="Action details (e.g., written warning, 2-day suspension)"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal(this)">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitDisciplinary()"><i class="fas fa-plus"></i> Add Action</button>
+            </div>
+        </div>`;
+
+    document.body.appendChild(modal);
+    loadDisciplinaryEmployees();
+}
+
+async function loadDisciplinaryEmployees() {
+    try {
+        const employees = await dashboardManager.fetchEmployees();
+        const sel = document.getElementById('discEmployee');
+        sel.innerHTML = employees.map(e => `<option value="${e._id}">${e.name} (${e.department || 'N/A'})</option>`).join('');
+    } catch(e) {
+        console.error('Failed to load employees for disciplinary:', e.message);
+    }
+}
+
+async function refreshDisciplinaryTable() {
+    try {
+        const resp = await fetchDisciplinary();
+        const list = resp.data || resp || [];
+        const typeColor = (t) => ({
+            warning: '#f59e0b', probation: '#10b981', suspension: '#ef4444', termination: '#7c3aed', notice: '#3b82f6'
+        }[t] || '#6b7280');
+        const statusColor = (s) => ({ open: '#f59e0b', in_review: '#3b82f6', closed: '#10b981' }[s] || '#6b7280');
+        const rows = list.map(a => `
+            <tr>
+                <td>${a.employee?.name || 'N/A'}</td>
+                <td><span style="display:inline-block;padding:.25rem .5rem;border-radius:999px;background:${typeColor(a.type)}20;color:${typeColor(a.type)};font-weight:600;text-transform:capitalize">${a.type}</span></td>
+                <td><span style="display:inline-block;padding:.25rem .5rem;border-radius:999px;background:${statusColor(a.status)}20;color:${statusColor(a.status)};font-weight:600;text-transform:capitalize">${(a.status||'open').replace('_',' ')}</span></td>
+                <td><span style="display:inline-block;padding:.2rem .5rem;border-radius:8px;background:#fee2e2;color:#b91c1c;font-weight:600">${a.reason || '—'}</span></td>
+                <td>${a.action}</td>
+                <td>${new Date(a.issuedAt || a.createdAt).toLocaleString()}</td>
+                <td>${a.issuedBy?.name || 'N/A'}</td>
+                <td>
+                    <select title="Change Status" onchange="updateDisciplinaryStatus('${a._id}', this.value)" style="margin-right:.5rem">
+                        <option value="open" ${a.status==='open'?'selected':''}>Open</option>
+                        <option value="in_review" ${a.status==='in_review'?'selected':''}>In Review</option>
+                        <option value="closed" ${a.status==='closed'?'selected':''}>Closed</option>
+                    </select>
+                    <button class="btn-action btn-danger" onclick="removeDisciplinary('${a._id}')" title="Delete" style="border:1px solid var(--border-color);border-radius:8px;padding:.35rem .5rem"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>`).join('');
+        document.getElementById('discTableBody').innerHTML = rows || '<tr><td colspan="8">No records</td></tr>';
+    } catch(e) {
+        console.error('Failed to load disciplinary actions:', e.message);
+        document.getElementById('discTableBody').innerHTML = '<tr><td colspan="8">Failed to load</td></tr>';
+    }
+}
+
+async function submitDisciplinary() {
+    const payload = {
+        employee: document.getElementById('discEmployee').value,
+        type: document.getElementById('discType').value,
+        status: document.getElementById('discStatus').value,
+        reason: document.getElementById('discReason').value.trim(),
+        action: document.getElementById('discAction').value.trim()
+    };
+    if (!payload.employee || !payload.type || !payload.reason || !payload.action) {
+        alert('Please fill all required fields');
+        return;
+    }
+    try {
+        await createDisciplinary(payload);
+        await refreshDisciplinaryTable();
+        document.getElementById('discReason').value = '';
+        document.getElementById('discAction').value = '';
+        alert('Disciplinary action added');
+    } catch(e) {
+        alert('Failed to add: ' + e.message);
+    }
+}
+
+async function updateDisciplinaryStatus(id, status) {
+    try {
+        await updateDisciplinaryRecord(id, { status });
+        await refreshDisciplinaryTable();
+        alert('Status updated');
+    } catch(e) {
+        alert('Failed to update: ' + e.message);
+    }
+}
+
+async function removeDisciplinary(id) {
+    if (!confirm('Delete this record?')) return;
+    try {
+        await deleteDisciplinaryRecord(id);
+        await refreshDisciplinaryTable();
+    } catch(e) {
+        alert('Failed to delete: ' + e.message);
+    }
+}
+
 // Make functions globally available
 window.showAddEmployeeModal = showAddEmployeeModal;
 window.submitAddEmployee = submitAddEmployee;
 window.submitAddEvent = submitAddEvent;
+window.openDisciplinaryModal = openDisciplinaryModal;
+window.submitDisciplinary = submitDisciplinary;
+window.updateDisciplinaryStatus = updateDisciplinaryStatus;
+window.removeDisciplinary = removeDisciplinary;
 
 // Global functions for notification actions
 function viewEventDetails(eventId) {
@@ -4103,7 +5638,7 @@ function clearFilters() {
 }
 
 function viewEmployee(userId) {
-    const employee = window.allEmployees?.find(emp => emp._id === userId);
+    const employee = window.allEmployees?.find(emp => (emp._id === userId || emp.employeeId === userId || emp.id === userId));
     if (!employee) {
         alert('Employee not found');
         return;
@@ -4160,9 +5695,6 @@ function viewEmployee(userId) {
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-primary" onclick="editEmployee('${employeeId}')">
-                    <i class="fas fa-edit"></i> Edit Employee
-                </button>
                 <button class="btn btn-secondary" onclick="closeModal(this)">Close</button>
             </div>
         </div>
@@ -4172,7 +5704,7 @@ function viewEmployee(userId) {
 }
 
 function editEmployee(userId) {
-    const employee = window.allEmployees?.find(emp => emp._id === userId);
+    const employee = window.allEmployees?.find(emp => (emp._id === userId || emp.employeeId === userId || emp.id === userId));
     if (!employee) {
         alert('Employee not found');
         return;
@@ -5806,3 +7338,5 @@ window.AppState = AppState;
 window.DOMElements = DOMElements;
 
 logger.info('App-direct.js loaded successfully');
+
+
