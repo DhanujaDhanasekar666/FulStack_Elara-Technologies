@@ -1343,14 +1343,14 @@ class DashboardManager {
         `;
     }
 
-    loadTasksContent() {
+    async loadTasksContent() {
         const mainContent = document.getElementById('mainContent');
         if (!mainContent) return;
 
         mainContent.innerHTML = `
             <div class="card-header">
                 <h3 class="card-title">Task Management</h3>
-                <button class="btn btn-primary" onclick="alert('Add Task (Backend integration needed)')">
+                <button class="btn btn-primary" onclick="openCreateTaskModal()">
                     <i class="fas fa-plus"></i> Add Task
                 </button>
             </div>
@@ -1367,42 +1367,45 @@ class DashboardManager {
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${sampleData.tasks.map(task => `
-                            <tr>
-                                <td>${task.id}</td>
-                                <td>${task.title}</td>
-                                <td>${task.assignee}</td>
-                                <td>${task.dueDate}</td>
-                                <td><span class="status status-${task.status.toLowerCase()}">${task.status}</span></td>
-                                <td><span class="priority priority-${task.priority.toLowerCase()}">${task.priority}</span></td>
-                                <td class="actions">
-                                    <button class="btn-action btn-primary" onclick="alert('View Task: ${task.title}')" title="View">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    <button class="btn-action btn-success" onclick="alert('Edit Task: ${task.title}')" title="Edit">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn-action btn-danger" onclick="alert('Delete Task: ${task.title}')" title="Delete">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
+                    <tbody id="tasksTableBody"><tr><td colspan="7">Loading...</td></tr></tbody>
                 </table>
             </div>
         `;
+        try {
+            const resp = await window.apiService.get('/tasks');
+            const tasks = (resp.data && resp.data.data) || resp.data || [];
+            const rows = tasks.map(task => `
+                <tr>
+                    <td>${task._id?.slice(-6) || ''}</td>
+                    <td>${task.title}</td>
+                    <td>${task.assignedTo?.name || '—'}</td>
+                    <td>${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '—'}</td>
+                    <td>
+                        <select onchange="updateTaskStatus('${task._id}', this.value)" class="form-control" style="min-width: 120px;">
+                            ${['Pending','In Progress','Completed','Blocked'].map(s => `<option value="${s}" ${s===(task.status||'')?'selected':''}>${s}</option>`).join('')}
+                        </select>
+                    </td>
+                    <td>${task.priority}</td>
+                    <td class="actions">
+                        <button class="btn-action btn-primary" onclick="viewTask('${task._id}')" title="View"><i class="fas fa-eye"></i></button>
+                        <button class="btn-action btn-danger" onclick="deleteTask('${task._id}', '${task.title?.replace(/'/g, "\'")||'Task'}')" title="Delete"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+            document.getElementById('tasksTableBody').innerHTML = rows || '<tr><td colspan="7">No tasks</td></tr>';
+        } catch(e) {
+            document.getElementById('tasksTableBody').innerHTML = '<tr><td colspan="7">Failed to load tasks</td></tr>';
+        }
     }
 
-    loadLeavesContent() {
+    async loadLeavesContent() {
         const mainContent = document.getElementById('mainContent');
         if (!mainContent) return;
 
         mainContent.innerHTML = `
             <div class="card-header">
                 <h3 class="card-title">Leave Management</h3>
-                <button class="btn btn-primary" onclick="alert('Request Leave (Backend integration needed)')">
+                <button class="btn btn-primary" onclick="openRequestLeaveModal()">
                     <i class="fas fa-plus"></i> Request Leave
                 </button>
             </div>
@@ -1420,35 +1423,44 @@ class DashboardManager {
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${sampleData.leaveRequests.map(leave => `
-                            <tr>
-                                <td>${leave.id}</td>
-                                <td>${leave.employee}</td>
-                                <td>${leave.type}</td>
-                                <td>${leave.startDate}</td>
-                                <td>${leave.endDate}</td>
-                                <td>${leave.days}</td>
-                                <td><span class="status status-${leave.status}">${leave.status}</span></td>
-                                <td class="actions">
-                                    <button class="btn-action btn-primary" onclick="alert('View Leave: ${leave.employee}')" title="View">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    ${leave.status === 'pending' ? `
-                                        <button class="btn-action btn-success" onclick="alert('Approve Leave: ${leave.employee}')" title="Approve">
-                                            <i class="fas fa-check"></i>
-                                        </button>
-                                        <button class="btn-action btn-danger" onclick="alert('Reject Leave: ${leave.employee}')" title="Reject">
-                                            <i class="fas fa-times"></i>
-                                        </button>
-                                    ` : ''}
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
+                    <tbody id="leavesTableBody"><tr><td colspan="8">Loading...</td></tr></tbody>
                 </table>
             </div>
         `;
+
+        try {
+            const resp = await window.apiService.get('/leaves');
+            const leaves = (resp.data && resp.data.data) || resp.data || [];
+            const rows = leaves.map(l => {
+                const id = l._id?.slice(-6) || '';
+                const emp = l.employee?.name || '—';
+                const days = l.numberOfDays || (l.startDate && l.endDate ? Math.round((new Date(l.endDate)-new Date(l.startDate))/(1000*60*60*24))+1 : '—');
+                const status = l.status || 'Pending';
+                const statusClass = `status-${status.toLowerCase()}`;
+                return `
+                    <tr>
+                        <td>${id}</td>
+                        <td>${emp}</td>
+                        <td>${l.type}</td>
+                        <td>${l.startDate ? new Date(l.startDate).toLocaleDateString() : '—'}</td>
+                        <td>${l.endDate ? new Date(l.endDate).toLocaleDateString() : '—'}</td>
+                        <td>${days}</td>
+                        <td><span class="status ${statusClass}">${status}</span></td>
+                        <td class="actions">
+                            ${['manager','hr','admin'].includes((authManager.getCurrentRole()||'').toLowerCase()) && status==='Pending' ? `
+                                <button class="btn-action btn-success" onclick="approveLeave('${l._id}')" title="Approve"><i class='fas fa-check'></i></button>
+                                <button class="btn-action btn-danger" onclick="rejectLeave('${l._id}')" title="Reject"><i class='fas fa-times'></i></button>
+                            ` : ''}
+                            ${(authManager.getCurrentRole()||'').toLowerCase()!=='employee' || status==='Pending' ? `
+                                <button class="btn-action btn-danger" onclick="deleteLeaveReq('${l._id}')" title="Delete"><i class='fas fa-trash'></i></button>
+                            ` : ''}
+                        </td>
+                    </tr>`;
+            }).join('');
+            document.getElementById('leavesTableBody').innerHTML = rows || '<tr><td colspan="8">No leaves</td></tr>';
+        } catch(e) {
+            document.getElementById('leavesTableBody').innerHTML = '<tr><td colspan="8">Failed to load leaves</td></tr>';
+        }
     }
 
     loadAttendanceContent() {
@@ -3280,6 +3292,7 @@ class DashboardManager {
     }
 }
 
+// (moved) Tasks helpers are defined after class/initializers to avoid class scope issues
     createSampleProjectStatusChart() {
         const ctx = document.getElementById('projectStatusChart');
         if (!ctx) return;
@@ -4941,6 +4954,19 @@ function initializeLogin() {
         logger.error('Login form not found');
         return;
     }
+    // Remove any stray overlays that could block clicks
+    document.querySelectorAll('.modal-overlay,.loading-overlay').forEach(el => el.remove());
+    // Ensure login buttons are enabled and clickable
+    try {
+        if (DOMElements.loginPage) {
+            DOMElements.loginPage.querySelectorAll('button').forEach(btn => {
+                btn.disabled = false;
+                btn.style.pointerEvents = 'auto';
+            });
+        }
+    } catch (e) {
+        logger.warn('Failed to normalize login buttons', { error: e.message });
+    }
     
     DOMElements.loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -5112,6 +5138,10 @@ function initializeApp() {
             logger.error('Failed to cache DOM elements - aborting initialization');
             return;
         }
+        // Hard reset any blocking overlays and force login view visible
+        document.querySelectorAll('.modal-overlay,.loading-overlay').forEach(el => el.remove());
+        if (DOMElements.dashboard) DOMElements.dashboard.style.display = 'none';
+        if (DOMElements.loginPage) DOMElements.loginPage.style.display = 'flex';
         
         // Step 2: Initialize date display
         initializeDate();
@@ -7597,3 +7627,187 @@ logger.info('App-direct.js loaded successfully');
 
 
 
+
+// Leave helpers (global)
+function openRequestLeaveModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="fas fa-plane-departure"></i> Request Leave</h3>
+                <button class="modal-close" onclick="closeModal(this)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group"><label>Type</label>
+                    <select id="leaveType" class="form-control">
+                        <option>Sick Leave</option>
+                        <option>Vacation</option>
+                        <option>Personal</option>
+                        <option>Maternity</option>
+                        <option>Paternity</option>
+                        <option>Emergency</option>
+                        <option>Unpaid</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Start Date</label><input id="leaveStart" type="date" class="form-control" /></div>
+                <div class="form-group"><label>End Date</label><input id="leaveEnd" type="date" class="form-control" /></div>
+                <div class="form-group"><label>Reason</label><textarea id="leaveReason" class="form-control" rows="3" placeholder="Reason"></textarea></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal(this)">Cancel</button>
+                <button class="btn btn-primary" onclick="submitRequestLeave()">Submit</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+}
+
+async function submitRequestLeave() {
+    try {
+        const type = document.getElementById('leaveType').value;
+        const startDate = document.getElementById('leaveStart').value;
+        const endDate = document.getElementById('leaveEnd').value;
+        const reason = document.getElementById('leaveReason').value.trim();
+        if (!type || !startDate || !endDate || !reason) {
+            alert('Fill all fields');
+            return;
+        }
+        await window.apiService.post('/leaves', { type, startDate, endDate, reason });
+        closeTopModal();
+        await dashboardManager.loadLeavesContent();
+        alert('Leave requested');
+    } catch(e) {
+        alert('Failed to request leave: ' + (e.message||'Error'));
+    }
+}
+
+async function approveLeave(id) {
+    try {
+        await window.apiService.put(`/leaves/${id}/status`, { status: 'Approved' });
+        await dashboardManager.loadLeavesContent();
+    } catch(e) { alert('Failed to approve: ' + (e.message||'Error')); }
+}
+
+async function rejectLeave(id) {
+    const reason = prompt('Reason for rejection?') || 'Rejected';
+    try {
+        await window.apiService.put(`/leaves/${id}/status`, { status: 'Rejected', rejectionReason: reason });
+        await dashboardManager.loadLeavesContent();
+    } catch(e) { alert('Failed to reject: ' + (e.message||'Error')); }
+}
+
+async function deleteLeaveReq(id) {
+    if (!confirm('Delete this leave request?')) return;
+    try {
+        await window.apiService.delete(`/leaves/${id}`);
+        await dashboardManager.loadLeavesContent();
+    } catch(e) { alert('Failed to delete: ' + (e.message||'Error')); }
+}
+
+window.openRequestLeaveModal = openRequestLeaveModal;
+window.submitRequestLeave = submitRequestLeave;
+window.approveLeave = approveLeave;
+window.rejectLeave = rejectLeave;
+window.deleteLeaveReq = deleteLeaveReq;
+// =============================================================
+// Tasks: modal + submit handlers (global for onclick)
+// =============================================================
+async function openCreateTaskModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3><i class="fas fa-plus-circle"></i> New Task</h3>
+                <button class="modal-close" onclick="closeModal(this)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group"><label>Title</label><input id="taskTitle" class="form-control" placeholder="Task title" /></div>
+                <div class="form-group"><label>Description</label><textarea id="taskDesc" class="form-control" rows="3" placeholder="Task description"></textarea></div>
+                <div class="form-group"><label>Assign To</label><select id="taskAssignee" class="form-control"></select></div>
+                <div class="form-group"><label>Priority</label>
+                    <select id="taskPriority" class="form-control">
+                        <option>Low</option><option selected>Medium</option><option>High</option><option>Urgent</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Due Date</label><input id="taskDue" type="date" class="form-control" /></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal(this)">Cancel</button>
+                <button class="btn btn-primary" onclick="submitCreateTask()">Create</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+
+    try {
+        const resp = await window.apiService.get('/users?role=employee');
+        const users = (resp.data && resp.data.data) || resp.data || [];
+        const sel = document.getElementById('taskAssignee');
+        sel.innerHTML = users.map(u => `<option value="${u._id}">${u.name} (${u.employeeId||u.email})</option>`).join('');
+    } catch(e) {
+        alert('Failed to load employees');
+    }
+}
+
+async function submitCreateTask() {
+    try {
+        const title = document.getElementById('taskTitle').value.trim();
+        const description = document.getElementById('taskDesc').value.trim();
+        const assignedTo = document.getElementById('taskAssignee').value;
+        const priority = document.getElementById('taskPriority').value;
+        const dueDate = document.getElementById('taskDue').value;
+        if (!title || !description || !assignedTo || !dueDate) {
+            alert('Please fill Title, Description, Assignee and Due Date');
+            return;
+        }
+        await window.apiService.post('/tasks', { title, description, assignedTo, priority, dueDate });
+
+        // Simple notification to assignee for demo UI
+        const assigneeOption = document.getElementById('taskAssignee').selectedOptions[0];
+        const assigneeName = assigneeOption ? assigneeOption.textContent.split('(')[0].trim() : 'Employee';
+        if (window.sampleData && Array.isArray(window.sampleData.announcements)) {
+            window.sampleData.announcements.unshift({
+                id: Date.now(),
+                title: 'New Task Assigned',
+                content: `${assigneeName} assigned: ${title}`,
+                date: new Date().toISOString().split('T')[0],
+                priority: 'high',
+                type: 'task'
+            });
+        }
+
+        closeTopModal();
+        await dashboardManager.loadTasksContent();
+        alert('Task created');
+    } catch(e) {
+        alert('Failed to create task: ' + (e.message||'Error'));
+    }
+}
+
+// Expose handlers
+window.openCreateTaskModal = openCreateTaskModal;
+window.submitCreateTask = submitCreateTask;
+
+async function updateTaskStatus(taskId, status) {
+    try {
+        await window.apiService.put(`/tasks/${taskId}`, { status });
+        // Optionally show a small toast; keeping it silent for now
+    } catch (e) {
+        alert('Failed to update status: ' + (e.message||'Error'));
+        // reload to recover
+        await dashboardManager.loadTasksContent();
+    }
+}
+
+async function deleteTask(taskId, title) {
+    if (!confirm(`Delete task "${title}"?`)) return;
+    try {
+        await window.apiService.delete(`/tasks/${taskId}`);
+        await dashboardManager.loadTasksContent();
+    } catch (e) {
+        alert('Failed to delete task: ' + (e.message||'Error'));
+    }
+}
+
+window.updateTaskStatus = updateTaskStatus;
+window.deleteTask = deleteTask;

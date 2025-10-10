@@ -1,6 +1,5 @@
 import Task from '../models/Task.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import ErrorResponse from '../utils/errorResponse.js';
 
 // @desc    Get all tasks
 // @route   GET /api/v1/tasks
@@ -43,7 +42,7 @@ export const getTask = asyncHandler(async (req, res, next) => {
         .populate('comments.userId', 'name email');
 
     if (!task) {
-        return next(new ErrorResponse(`Task not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Task not found with id of ${req.params.id}` });
     }
 
     res.status(200).json({
@@ -73,7 +72,7 @@ export const updateTask = asyncHandler(async (req, res, next) => {
     let task = await Task.findById(req.params.id);
 
     if (!task) {
-        return next(new ErrorResponse(`Task not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Task not found with id of ${req.params.id}` });
     }
 
     task = await Task.findByIdAndUpdate(req.params.id, req.body, {
@@ -94,7 +93,7 @@ export const deleteTask = asyncHandler(async (req, res, next) => {
     const task = await Task.findById(req.params.id);
 
     if (!task) {
-        return next(new ErrorResponse(`Task not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Task not found with id of ${req.params.id}` });
     }
 
     await task.deleteOne();
@@ -112,7 +111,7 @@ export const addComment = asyncHandler(async (req, res, next) => {
     const task = await Task.findById(req.params.id);
 
     if (!task) {
-        return next(new ErrorResponse(`Task not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Task not found with id of ${req.params.id}` });
     }
 
     task.comments.push({

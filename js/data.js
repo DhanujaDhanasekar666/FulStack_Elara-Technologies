@@ -130,7 +130,6 @@ const menuItems = {
     hr: [
         { id: "home", name: "Home", icon: "fas fa-home" },
         { id: "employees", name: "Employees", icon: "fas fa-users" },
-        { id: "leaves", name: "Leave Requests", icon: "fas fa-calendar-times" },
         { id: "disciplinary", name: "Disciplinary Records", icon: "fas fa-exclamation-triangle" },
         { id: "promotions", name: "Promotions", icon: "fas fa-level-up-alt" },
         { id: "payroll", name: "Payroll", icon: "fas fa-money-bill-wave" }
@@ -146,6 +145,7 @@ const menuItems = {
         { id: "home", name: "Home", icon: "fas fa-home" },
         { id: "projects", name: "Projects", icon: "fas fa-project-diagram" },
         { id: "tasks", name: "Tasks", icon: "fas fa-tasks" },
+        { id: "leaves", name: "Leave Requests", icon: "fas fa-calendar-times" },
         { id: "employees", name: "Team Members", icon: "fas fa-users" },
         { id: "reports", name: "Reports", icon: "fas fa-chart-bar" },
         { id: "attendance", name: "Attendance", icon: "fas fa-clock" }

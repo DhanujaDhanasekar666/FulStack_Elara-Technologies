@@ -1,6 +1,5 @@
 import Leave from '../models/Leave.js';
 import { asyncHandler } from '../middleware/asyncHandler.js';
-import ErrorResponse from '../utils/errorResponse.js';
 
 // @desc    Get all leaves
 // @route   GET /api/v1/leaves
@@ -40,7 +39,7 @@ export const getLeave = asyncHandler(async (req, res, next) => {
         .populate('approvedBy', 'name email');
 
     if (!leave) {
-        return next(new ErrorResponse(`Leave not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Leave not found with id of ${req.params.id}` });
     }
 
     res.status(200).json({
@@ -70,7 +69,7 @@ export const updateLeave = asyncHandler(async (req, res, next) => {
     let leave = await Leave.findById(req.params.id);
 
     if (!leave) {
-        return next(new ErrorResponse(`Leave not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Leave not found with id of ${req.params.id}` });
     }
 
     leave = await Leave.findByIdAndUpdate(req.params.id, req.body, {
@@ -93,7 +92,7 @@ export const updateLeaveStatus = asyncHandler(async (req, res, next) => {
     const leave = await Leave.findById(req.params.id);
 
     if (!leave) {
-        return next(new ErrorResponse(`Leave not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Leave not found with id of ${req.params.id}` });
     }
 
     leave.status = status;
@@ -119,12 +118,12 @@ export const deleteLeave = asyncHandler(async (req, res, next) => {
     const leave = await Leave.findById(req.params.id);
 
     if (!leave) {
-        return next(new ErrorResponse(`Leave not found with id of ${req.params.id}`, 404));
+        return res.status(404).json({ success: false, error: `Leave not found with id of ${req.params.id}` });
     }
 
     // Only allow deletion if it's the owner or admin/hr
     if (leave.employee.toString() !== req.user.id && !['admin', 'hr'].includes(req.user.role)) {
-        return next(new ErrorResponse('Not authorized to delete this leave', 403));
+        return res.status(403).json({ success: false, error: 'Not authorized to delete this leave' });
     }
 
     await leave.deleteOne();
