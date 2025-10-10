@@ -261,7 +261,39 @@ class DashboardManager {
     constructor(authManager) {
         this.authManager = authManager;
         this.currentContent = null;
+        this.cache = new Map();
+        this.cacheTimestamps = new Map();
         logger.info('DashboardManager initialized');
+    }
+
+    // Cache management methods
+    getCachedData(key, maxAge = 30000) {
+        const timestamp = this.cacheTimestamps.get(key);
+        if (!timestamp || Date.now() - timestamp > maxAge) {
+            this.cache.delete(key);
+            this.cacheTimestamps.delete(key);
+            return null;
+        }
+        return this.cache.get(key);
+    }
+
+    setCachedData(key, data) {
+        this.cache.set(key, data);
+        this.cacheTimestamps.set(key, Date.now());
+    }
+
+    clearCache(pattern = null) {
+        if (pattern) {
+            for (const key of this.cache.keys()) {
+                if (key.includes(pattern)) {
+                    this.cache.delete(key);
+                    this.cacheTimestamps.delete(key);
+                }
+            }
+        } else {
+            this.cache.clear();
+            this.cacheTimestamps.clear();
+        }
     }
 
     async loadDisciplinaryContent() {
@@ -756,19 +788,91 @@ class DashboardManager {
                 </div>
             </div>
             
-            <div class="recent-activity">
-                <h3>Recent Activity</h3>
-                <div class="activity-list">
-                    ${recentActivities.map(activity => `
-                        <div class="activity-item">
-                            <i class="${activity.icon}"></i>
-                            <span>${activity.message}</span>
-                            <small>${activity.timeAgo}</small>
-                        </div>
-                    `).join('')}
+            <div class="dashboard-sections">
+                <div class="pending-tasks-section">
+                    <h3><i class="fas fa-tasks"></i> My Pending Tasks</h3>
+                    <div id="pendingTasksList" class="pending-tasks-list">
+                        <div class="loading-spinner">Loading tasks...</div>
+                    </div>
+                </div>
+                
+                <div class="recent-activity">
+                    <h3><i class="fas fa-clock"></i> Recent Activity</h3>
+                    <div class="activity-list">
+                        ${recentActivities.map(activity => `
+                            <div class="activity-item">
+                                <i class="${activity.icon}"></i>
+                                <span>${activity.message}</span>
+                                <small>${activity.timeAgo}</small>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
         `;
+        
+        // Load pending tasks after rendering
+        await this.loadPendingTasksForHome();
+    }
+
+    async loadPendingTasksForHome() {
+        try {
+            const currentUser = this.authManager.getCurrentUser();
+            if (!currentUser) return;
+
+            // Use cached tasks data if available
+            const cacheKey = 'tasks-cache';
+            const cachedTasks = this.getCachedData(cacheKey, 30000);
+            
+            let tasks;
+            if (cachedTasks) {
+                logger.info('Using cached tasks for home page');
+                tasks = cachedTasks;
+            } else {
+                const response = await window.apiService.get('/tasks');
+                tasks = (response.data && response.data.data) || response.data || [];
+                this.setCachedData(cacheKey, tasks);
+            }
+
+            // Filter tasks for current user that are not completed
+            const pendingTasks = tasks.filter(task =>
+                task.assignedTo &&
+                (task.assignedTo._id === currentUser.id || task.assignedTo === currentUser.id) &&
+                (task.status === 'Pending' || task.status === 'In Progress' || task.status === 'Under Review')
+            ).slice(0, 5); // Show only first 5 tasks
+
+            const pendingTasksList = document.getElementById('pendingTasksList');
+            if (!pendingTasksList) return;
+
+            if (pendingTasks.length === 0) {
+                pendingTasksList.innerHTML = '<div class="no-tasks">No pending tasks</div>';
+                return;
+            }
+
+            pendingTasksList.innerHTML = pendingTasks.map(task => `
+                <div class="task-item">
+                    <div class="task-info">
+                        <h4>${task.title}</h4>
+                        <p>${task.description || 'No description'}</p>
+                        <div class="task-meta">
+                            <span class="priority priority-${task.priority?.toLowerCase()}">${task.priority}</span>
+                            <span class="due-date">Due: ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date'}</span>
+                        </div>
+                    </div>
+                    <div class="task-actions">
+                        <button class="btn btn-sm btn-primary" onclick="dashboardManager.loadContent('tasks')">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            logger.error('Failed to load pending tasks:', error);
+            const pendingTasksList = document.getElementById('pendingTasksList');
+            if (pendingTasksList) {
+                pendingTasksList.innerHTML = '<div class="error-message">Failed to load tasks</div>';
+            }
+        }
     }
 
     async loadEmployeesContent() {
@@ -966,12 +1070,21 @@ class DashboardManager {
             const response = await window.apiService.get('/tasks');
             if (response && response.data) {
                 const tasks = Array.isArray(response.data) ? response.data : [response.data];
-                return tasks.filter(task => task.status === 'pending').length;
+                // Count tasks that are not completed (Pending, In Progress, Under Review)
+                return tasks.filter(task => 
+                    task.status === 'Pending' || 
+                    task.status === 'In Progress' || 
+                    task.status === 'Under Review'
+                ).length;
             }
         } catch (error) {
             logger.warn('Failed to get task count:', error.message);
         }
-        return sampleData.tasks.filter(task => task.status === 'pending').length;
+        return sampleData.tasks.filter(task => 
+            task.status === 'Pending' || 
+            task.status === 'In Progress' || 
+            task.status === 'Under Review'
+        ).length;
     }
 
     async getRealLeaveCount() {
@@ -1347,55 +1460,144 @@ class DashboardManager {
         const mainContent = document.getElementById('mainContent');
         if (!mainContent) return;
 
+        const currentUser = this.authManager.getCurrentUser();
+        const currentRole = this.authManager.getCurrentRole();
+        const isEmployee = currentRole?.toLowerCase() === 'employee';
+
+        // Show loading state immediately
         mainContent.innerHTML = `
             <div class="card-header">
-                <h3 class="card-title">Task Management</h3>
-                <button class="btn btn-primary" onclick="openCreateTaskModal()">
-                    <i class="fas fa-plus"></i> Add Task
-                </button>
+                <h3 class="card-title">${isEmployee ? 'My Tasks' : 'Task Management'}</h3>
+                ${!isEmployee ? `
+                    <button class="btn btn-primary" onclick="openCreateTaskModal()">
+                        <i class="fas fa-plus"></i> Add Task
+                    </button>
+                ` : ''}
             </div>
+
+            ${isEmployee ? `
+                <div class="task-filters">
+                    <div class="filter-group">
+                        <label>Status:</label>
+                        <select id="statusFilter" onchange="filterTasks()">
+                            <option value="">All Status</option>
+                            <option value="Pending">Pending</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Under Review">Under Review</option>
+                            <option value="Completed">Completed</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Priority:</label>
+                        <select id="priorityFilter" onchange="filterTasks()">
+                            <option value="">All Priority</option>
+                            <option value="Low">Low</option>
+                            <option value="Medium">Medium</option>
+                            <option value="High">High</option>
+                            <option value="Urgent">Urgent</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Search:</label>
+                        <input type="text" id="taskSearch" placeholder="Search tasks..." onkeyup="filterTasks()">
+                    </div>
+                </div>
+            ` : ''}
+
             <div class="table-container">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>ID</th>
                             <th>Title</th>
-                            <th>Assignee</th>
+                            ${!isEmployee ? '<th>Assignee</th>' : ''}
                             <th>Due Date</th>
                             <th>Status</th>
                             <th>Priority</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody id="tasksTableBody"><tr><td colspan="7">Loading...</td></tr></tbody>
+                    <tbody id="tasksTableBody"><tr><td colspan="${isEmployee ? '6' : '7'}">Loading...</td></tr></tbody>
                 </table>
             </div>
         `;
+
         try {
-            const resp = await window.apiService.get('/tasks');
-            const tasks = (resp.data && resp.data.data) || resp.data || [];
-            const rows = tasks.map(task => `
-                <tr>
+            // Use cached data if available and recent (within 30 seconds)
+            const cacheKey = 'tasks-cache';
+            const cachedData = this.getCachedData(cacheKey, 30000); // 30 seconds cache
+            
+            let allTasks;
+            if (cachedData) {
+                logger.info('Using cached tasks data');
+                allTasks = cachedData;
+            } else {
+                const resp = await window.apiService.get('/tasks');
+                allTasks = (resp.data && resp.data.data) || resp.data || [];
+                this.setCachedData(cacheKey, allTasks);
+            }
+
+            // Filter tasks based on role
+            let tasks = allTasks;
+            if (isEmployee) {
+                tasks = allTasks.filter(task =>
+                    task.assignedTo &&
+                    (task.assignedTo._id === currentUser.id || task.assignedTo === currentUser.id)
+                );
+            }
+
+            this.renderTasksTable(tasks, isEmployee);
+        } catch(e) {
+            logger.error('Failed to load tasks:', e);
+            document.getElementById('tasksTableBody').innerHTML = `<tr><td colspan="${isEmployee ? '6' : '7'}">Failed to load tasks</td></tr>`;
+        }
+    }
+
+    renderTasksTable(tasks, isEmployee) {
+        const rows = tasks.map(task => {
+            const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'Completed';
+            const dueDateClass = isOverdue ? 'overdue' : '';
+            
+            return `
+                <tr class="task-row ${dueDateClass}">
                     <td>${task._id?.slice(-6) || ''}</td>
-                    <td>${task.title}</td>
-                    <td>${task.assignedTo?.name || '—'}</td>
-                    <td>${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '—'}</td>
                     <td>
-                        <select onchange="updateTaskStatus('${task._id}', this.value)" class="form-control" style="min-width: 120px;">
-                            ${['Pending','In Progress','Completed','Blocked'].map(s => `<option value="${s}" ${s===(task.status||'')?'selected':''}>${s}</option>`).join('')}
+                        <div class="task-title">
+                            <strong>${task.title}</strong>
+                            ${task.description ? `<br><small class="task-description">${task.description.substring(0, 50)}${task.description.length > 50 ? '...' : ''}</small>` : ''}
+                        </div>
+                    </td>
+                    ${!isEmployee ? `<td>${task.assignedTo?.name || '—'}</td>` : ''}
+                    <td class="${dueDateClass}">
+                        ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : '—'}
+                        ${isOverdue ? '<br><small class="overdue-text">Overdue</small>' : ''}
+                    </td>
+                    <td>
+                        <select onchange="updateTaskStatus('${task._id}', this.value)" class="form-control task-status" style="min-width: 120px;">
+                            ${['Pending','In Progress','Under Review','Completed'].map(s => 
+                                `<option value="${s}" ${s===(task.status||'')?'selected':''}>${s}</option>`
+                            ).join('')}
                         </select>
                     </td>
-                    <td>${task.priority}</td>
+                    <td>
+                        <span class="priority-badge priority-${task.priority?.toLowerCase()}">${task.priority}</span>
+                    </td>
                     <td class="actions">
-                        <button class="btn-action btn-primary" onclick="viewTask('${task._id}')" title="View"><i class="fas fa-eye"></i></button>
-                        <button class="btn-action btn-danger" onclick="deleteTask('${task._id}', '${task.title?.replace(/'/g, "\'")||'Task'}')" title="Delete"><i class="fas fa-trash"></i></button>
+                        <button class="btn-action btn-primary" onclick="viewTaskDetails('${task._id}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        ${!isEmployee ? `
+                            <button class="btn-action btn-danger" onclick="deleteTask('${task._id}', '${task.title?.replace(/'/g, "\'")||'Task'}')" title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : ''}
                     </td>
                 </tr>
-            `).join('');
-            document.getElementById('tasksTableBody').innerHTML = rows || '<tr><td colspan="7">No tasks</td></tr>';
-        } catch(e) {
-            document.getElementById('tasksTableBody').innerHTML = '<tr><td colspan="7">Failed to load tasks</td></tr>';
-        }
+            `;
+        }).join('');
+        
+        const colSpan = isEmployee ? '6' : '7';
+        document.getElementById('tasksTableBody').innerHTML = rows || `<tr><td colspan="${colSpan}">No tasks found</td></tr>`;
     }
 
     async loadLeavesContent() {
@@ -1463,84 +1665,310 @@ class DashboardManager {
         }
     }
 
-    loadAttendanceContent() {
+    async loadAttendanceContent() {
         const mainContent = document.getElementById('mainContent');
         if (!mainContent) return;
 
-        const attendanceData = [
-            { id: 1, employee: "John Doe", date: "2024-01-15", checkIn: "09:00 AM", checkOut: "06:00 PM", status: "Present", hours: "9.0" },
-            { id: 2, employee: "Jane Smith", date: "2024-01-15", checkIn: "08:45 AM", checkOut: "05:45 PM", status: "Present", hours: "9.0" },
-            { id: 3, employee: "Mike Johnson", date: "2024-01-15", checkIn: "09:30 AM", checkOut: "06:30 PM", status: "Late", hours: "9.0" },
-            { id: 4, employee: "Emily Davis", date: "2024-01-15", checkIn: "-", checkOut: "-", status: "Absent", hours: "0" }
-        ];
+        const currentUser = this.authManager.getCurrentUser();
+        const currentRole = this.authManager.getCurrentRole();
+        const isEmployee = currentRole?.toLowerCase() === 'employee';
 
-        mainContent.innerHTML = `
-            <div class="card-header">
-                <h3 class="card-title">Attendance Tracking</h3>
-                <button class="btn btn-primary" onclick="alert('Mark Attendance (Backend integration needed)')">
-                    <i class="fas fa-plus"></i> Mark Attendance
-                </button>
-            </div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <i class="fas fa-user-check fa-2x"></i>
-                    <div class="stat-value">${attendanceData.filter(a => a.status === 'Present' || a.status === 'Late').length}</div>
-                    <div class="stat-label">Present</div>
+        try {
+            // Use cached data if available and recent (within 60 seconds)
+            const attendanceCacheKey = 'attendance-cache';
+            const statsCacheKey = 'attendance-stats-cache';
+            
+            const cachedAttendance = this.getCachedData(attendanceCacheKey, 60000);
+            const cachedStats = this.getCachedData(statsCacheKey, 60000);
+            
+            let attendanceData, stats;
+            
+            if (cachedAttendance && cachedStats) {
+                logger.info('Using cached attendance data');
+                attendanceData = cachedAttendance;
+                stats = cachedStats;
+            } else {
+                // Fetch attendance data and stats
+                const [attendanceResponse, statsResponse] = await Promise.all([
+                    window.apiService.get('/attendance'),
+                    window.apiService.get('/attendance/stats')
+                ]);
+
+                attendanceData = (attendanceResponse.data && attendanceResponse.data.data) || attendanceResponse.data || [];
+                stats = (statsResponse.data && statsResponse.data.data) || statsResponse.data || {};
+                
+                // Cache the data
+                this.setCachedData(attendanceCacheKey, attendanceData);
+                this.setCachedData(statsCacheKey, stats);
+            }
+
+            mainContent.innerHTML = `
+                <div class="card-header">
+                    <h3 class="card-title">${isEmployee ? 'My Attendance' : 'Attendance Management'}</h3>
+                    ${isEmployee ? `
+                        <div class="attendance-actions">
+                            <button class="btn btn-success" id="checkInBtn" onclick="checkInAttendance()">
+                                <i class="fas fa-sign-in-alt"></i> Check In
+                            </button>
+                            <button class="btn btn-warning" id="checkOutBtn" onclick="checkOutAttendance()">
+                                <i class="fas fa-sign-out-alt"></i> Check Out
+                            </button>
+                        </div>
+                    ` : `
+                        <button class="btn btn-primary" onclick="openAddAttendanceModal()">
+                            <i class="fas fa-plus"></i> Add Record
+                        </button>
+                    `}
                 </div>
-                <div class="stat-card">
-                    <i class="fas fa-user-times fa-2x"></i>
-                    <div class="stat-value">${attendanceData.filter(a => a.status === 'Absent').length}</div>
-                    <div class="stat-label">Absent</div>
+
+                ${isEmployee ? `
+                    <div class="attendance-status-card">
+                        <div class="status-info">
+                            <h4>Today's Status</h4>
+                            <div id="todayStatus" class="status-display">
+                                <div class="status-item">
+                                    <span class="label">Check In:</span>
+                                    <span id="checkInTime" class="value">—</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="label">Check Out:</span>
+                                    <span id="checkOutTime" class="value">—</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="label">Working Hours:</span>
+                                    <span id="workingHours" class="value">0h</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <i class="fas fa-user-check fa-2x"></i>
+                        <div class="stat-value">${stats.presentDays || 0}</div>
+                        <div class="stat-label">Present Days</div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-user-times fa-2x"></i>
+                        <div class="stat-value">${stats.absentDays || 0}</div>
+                        <div class="stat-label">Absent Days</div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-user-clock fa-2x"></i>
+                        <div class="stat-value">${stats.lateDays || 0}</div>
+                        <div class="stat-label">Late Days</div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-percentage fa-2x"></i>
+                        <div class="stat-value">${stats.attendanceRate || 0}%</div>
+                        <div class="stat-label">Attendance Rate</div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-clock fa-2x"></i>
+                        <div class="stat-value">${stats.totalWorkingHours || 0}h</div>
+                        <div class="stat-label">Total Hours</div>
+                    </div>
+                    <div class="stat-card">
+                        <i class="fas fa-plus-circle fa-2x"></i>
+                        <div class="stat-value">${stats.totalOvertime || 0}h</div>
+                        <div class="stat-label">Overtime</div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <i class="fas fa-user-clock fa-2x"></i>
-                    <div class="stat-value">${attendanceData.filter(a => a.status === 'Late').length}</div>
-                    <div class="stat-label">Late</div>
-                </div>
-                <div class="stat-card">
-                    <i class="fas fa-percentage fa-2x"></i>
-                    <div class="stat-value">${Math.round((attendanceData.filter(a => a.status === 'Present' || a.status === 'Late').length / attendanceData.length) * 100)}%</div>
-                    <div class="stat-label">Attendance Rate</div>
-                </div>
-            </div>
-            <div class="table-container">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Employee</th>
-                            <th>Date</th>
-                            <th>Check In</th>
-                            <th>Check Out</th>
-                            <th>Hours</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${attendanceData.map(att => `
+
+                ${isEmployee ? `
+                    <div class="attendance-filters">
+                        <div class="filter-group">
+                            <label>Status:</label>
+                            <select id="attendanceStatusFilter" onchange="filterAttendance()">
+                                <option value="">All Status</option>
+                                <option value="Present">Present</option>
+                                <option value="Late">Late</option>
+                                <option value="Absent">Absent</option>
+                                <option value="Half Day">Half Day</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Location:</label>
+                            <select id="locationFilter" onchange="filterAttendance()">
+                                <option value="">All Locations</option>
+                                <option value="Office">Office</option>
+                                <option value="Remote">Remote</option>
+                                <option value="Client Site">Client Site</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Date Range:</label>
+                            <input type="date" id="startDate" onchange="filterAttendance()">
+                            <input type="date" id="endDate" onchange="filterAttendance()">
+                        </div>
+                    </div>
+                ` : ''}
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
                             <tr>
-                                <td>${att.id}</td>
-                                <td>${att.employee}</td>
-                                <td>${att.date}</td>
-                                <td>${att.checkIn}</td>
-                                <td>${att.checkOut}</td>
-                                <td>${att.hours}h</td>
-                                <td><span class="status ${att.status === 'Present' ? 'status-approved' : att.status === 'Absent' ? 'status-rejected' : 'status-pending'}">${att.status}</span></td>
-                                <td class="actions">
-                                    <button class="btn-action btn-primary" onclick="alert('View Attendance: ${att.employee}')" title="View">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    <button class="btn-action btn-success" onclick="alert('Edit Attendance: ${att.employee}')" title="Edit">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                </td>
+                                <th>Date</th>
+                                ${!isEmployee ? '<th>Employee</th>' : ''}
+                                <th>Check In</th>
+                                <th>Check Out</th>
+                                <th>Hours</th>
+                                <th>Status</th>
+                                <th>Location</th>
+                                <th>Actions</th>
                             </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+                        </thead>
+                        <tbody id="attendanceTableBody">
+                            <tr><td colspan="${isEmployee ? '7' : '8'}">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            this.renderAttendanceTable(attendanceData, isEmployee);
+            if (isEmployee) {
+                this.updateTodayStatus(attendanceData);
+            }
+
+        } catch (error) {
+            logger.error('Failed to load attendance:', error);
+            mainContent.innerHTML = `
+                <div class="error-state">
+                    <i class="fas fa-exclamation-triangle fa-3x"></i>
+                    <h3>Failed to load attendance data</h3>
+                    <p>Please try again later or contact support if the issue persists.</p>
+                    <button class="btn btn-primary" onclick="dashboardManager.loadAttendanceContent()">
+                        <i class="fas fa-refresh"></i> Retry
+                    </button>
+                </div>
+            `;
+        }
+    }
+
+    renderAttendanceTable(attendanceData, isEmployee) {
+        const rows = attendanceData.map(record => {
+            const checkInTime = record.checkIn ? new Date(record.checkIn).toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: true 
+            }) : '—';
+            
+            const checkOutTime = record.checkOut ? new Date(record.checkOut).toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: true 
+            }) : '—';
+
+            const workingHours = record.workingHours ? `${record.workingHours}h` : '—';
+            const statusClass = this.getAttendanceStatusClass(record.status);
+
+            return `
+                <tr class="attendance-row">
+                    <td>${new Date(record.date).toLocaleDateString()}</td>
+                    ${!isEmployee ? `<td>${record.employee?.name || '—'}</td>` : ''}
+                    <td>${checkInTime}</td>
+                    <td>${checkOutTime}</td>
+                    <td>${workingHours}</td>
+                    <td><span class="status ${statusClass}">${record.status}</span></td>
+                    <td><span class="location-badge location-${record.location?.toLowerCase().replace(' ', '-')}">${record.location}</span></td>
+                    <td class="actions">
+                        <button class="btn-action btn-primary" onclick="viewAttendanceDetails('${record._id}')" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        ${!isEmployee ? `
+                            <button class="btn-action btn-success" onclick="editAttendance('${record._id}')" title="Edit">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn-action btn-danger" onclick="deleteAttendance('${record._id}', '${record.employee?.name || 'Record'}')" title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : ''}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        const colSpan = isEmployee ? '7' : '8';
+        document.getElementById('attendanceTableBody').innerHTML = rows || `<tr><td colspan="${colSpan}">No attendance records found</td></tr>`;
+    }
+
+    updateTodayStatus(attendanceData) {
+        const today = new Date().toDateString();
+        const todayRecord = attendanceData.find(record => 
+            new Date(record.date).toDateString() === today
+        );
+
+        const checkInTimeEl = document.getElementById('checkInTime');
+        const checkOutTimeEl = document.getElementById('checkOutTime');
+        const workingHoursEl = document.getElementById('workingHours');
+        const checkInBtn = document.getElementById('checkInBtn');
+        const checkOutBtn = document.getElementById('checkOutBtn');
+
+        if (todayRecord) {
+            if (checkInTimeEl) {
+                checkInTimeEl.textContent = todayRecord.checkIn ? 
+                    new Date(todayRecord.checkIn).toLocaleTimeString('en-US', { 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        hour12: true 
+                    }) : '—';
+            }
+            
+            if (checkOutTimeEl) {
+                checkOutTimeEl.textContent = todayRecord.checkOut ? 
+                    new Date(todayRecord.checkOut).toLocaleTimeString('en-US', { 
+                        hour: '2-digit', 
+                        minute: '2-digit',
+                        hour12: true 
+                    }) : '—';
+            }
+            
+            if (workingHoursEl) {
+                workingHoursEl.textContent = todayRecord.workingHours ? 
+                    `${todayRecord.workingHours}h` : '0h';
+            }
+
+            // Update button states
+            if (checkInBtn) {
+                checkInBtn.disabled = !!todayRecord.checkIn;
+                checkInBtn.textContent = todayRecord.checkIn ? 
+                    '<i class="fas fa-check"></i> Checked In' : 
+                    '<i class="fas fa-sign-in-alt"></i> Check In';
+            }
+
+            if (checkOutBtn) {
+                checkOutBtn.disabled = !todayRecord.checkIn || !!todayRecord.checkOut;
+                checkOutBtn.textContent = todayRecord.checkOut ? 
+                    '<i class="fas fa-check"></i> Checked Out' : 
+                    '<i class="fas fa-sign-out-alt"></i> Check Out';
+            }
+        } else {
+            if (checkInTimeEl) checkInTimeEl.textContent = '—';
+            if (checkOutTimeEl) checkOutTimeEl.textContent = '—';
+            if (workingHoursEl) workingHoursEl.textContent = '0h';
+            
+            if (checkInBtn) {
+                checkInBtn.disabled = false;
+                checkInBtn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Check In';
+            }
+            
+            if (checkOutBtn) {
+                checkOutBtn.disabled = true;
+                checkOutBtn.innerHTML = '<i class="fas fa-sign-out-alt"></i> Check Out';
+            }
+        }
+    }
+
+    getAttendanceStatusClass(status) {
+        switch (status) {
+            case 'Present': return 'status-approved';
+            case 'Late': return 'status-pending';
+            case 'Absent': return 'status-rejected';
+            case 'Half Day': return 'status-warning';
+            case 'On Leave': return 'status-info';
+            default: return 'status-pending';
+        }
     }
 
     async loadPayrollContent() {
@@ -5759,12 +6187,36 @@ window.addEventListener('error', (event) => {
         lineno: event.lineno,
         colno: event.colno
     });
+    
+    // Show user-friendly error message for critical errors
+    if (event.error && event.error.message && !event.error.message.includes('Script error')) {
+        console.error('Application Error:', event.error.message);
+    }
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     logger.error('Unhandled promise rejection', {
         reason: event.reason
     });
+    
+    // Prevent default browser behavior for unhandled rejections
+    event.preventDefault();
+    
+    // Show user-friendly error message
+    if (event.reason && event.reason.message) {
+        console.error('Promise Rejection:', event.reason.message);
+    }
+});
+
+// Network error handler
+window.addEventListener('offline', () => {
+    logger.warn('Network connection lost');
+    // Could show a notification to user
+});
+
+window.addEventListener('online', () => {
+    logger.info('Network connection restored');
+    // Could show a notification to user
 });
 
 // ============================================================================
@@ -7806,6 +8258,459 @@ async function deleteTask(taskId, title) {
         await dashboardManager.loadTasksContent();
     } catch (e) {
         alert('Failed to delete task: ' + (e.message||'Error'));
+    }
+}
+
+// Task filtering function for employees
+function filterTasks() {
+    const statusFilter = document.getElementById('statusFilter')?.value || '';
+    const priorityFilter = document.getElementById('priorityFilter')?.value || '';
+    const searchTerm = document.getElementById('taskSearch')?.value.toLowerCase() || '';
+    
+    const rows = document.querySelectorAll('#tasksTableBody tr');
+    rows.forEach(row => {
+        if (row.cells.length < 6) return; // Skip header/loading rows
+        
+        const status = row.cells[4]?.querySelector('select')?.value || '';
+        const priority = row.cells[5]?.textContent.trim() || '';
+        const title = row.cells[1]?.textContent.toLowerCase() || '';
+        
+        const statusMatch = !statusFilter || status === statusFilter;
+        const priorityMatch = !priorityFilter || priority === priorityFilter;
+        const searchMatch = !searchTerm || title.includes(searchTerm);
+        
+        row.style.display = (statusMatch && priorityMatch && searchMatch) ? '' : 'none';
+    });
+}
+
+// Task details modal
+async function viewTaskDetails(taskId) {
+    try {
+        const response = await window.apiService.get(`/tasks/${taskId}`);
+        const task = response.data;
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-container task-details-modal">
+                <div class="modal-header">
+                    <h3>Task Details</h3>
+                    <button class="modal-close" onclick="closeTopModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="task-detail-section">
+                        <h4>${task.title}</h4>
+                        <p class="task-description">${task.description || 'No description provided'}</p>
+                    </div>
+                    
+                    <div class="task-detail-grid">
+                        <div class="detail-item">
+                            <label>Status:</label>
+                            <span class="status status-${task.status?.toLowerCase()}">${task.status}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Priority:</label>
+                            <span class="priority-badge priority-${task.priority?.toLowerCase()}">${task.priority}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Due Date:</label>
+                            <span>${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Assigned To:</label>
+                            <span>${task.assignedTo?.name || 'Unassigned'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Assigned By:</label>
+                            <span>${task.assignedBy?.name || 'Unknown'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Created:</label>
+                            <span>${task.createdAt ? new Date(task.createdAt).toLocaleDateString() : 'Unknown'}</span>
+                        </div>
+                    </div>
+                    
+                    ${task.comments && task.comments.length > 0 ? `
+                        <div class="task-comments">
+                            <h4>Comments</h4>
+                            <div class="comments-list">
+                                ${task.comments.map(comment => `
+                                    <div class="comment-item">
+                                        <strong>${comment.userId?.name || 'Unknown'}</strong>
+                                        <span class="comment-date">${new Date(comment.createdAt).toLocaleDateString()}</span>
+                                        <p>${comment.comment}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeTopModal()">Close</button>
+                    ${authManager.getCurrentRole()?.toLowerCase() === 'employee' ? `
+                        <button class="btn btn-primary" onclick="updateTaskStatusFromModal('${taskId}')">Update Status</button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    } catch (error) {
+        alert('Failed to load task details: ' + (error.message || 'Error'));
+    }
+}
+
+// Update task status from modal
+function updateTaskStatusFromModal(taskId) {
+    closeTopModal();
+    // Focus on the status dropdown for the specific task
+    setTimeout(() => {
+        const row = document.querySelector(`tr[data-task-id="${taskId}"]`);
+        if (row) {
+            const statusSelect = row.querySelector('.task-status');
+            if (statusSelect) {
+                statusSelect.focus();
+                statusSelect.click();
+            }
+        }
+    }, 100);
+}
+
+// Attendance Functions
+async function checkInAttendance() {
+    try {
+        const response = await window.apiService.post('/attendance/checkin', {
+            location: 'Office' // Default location, can be made configurable
+        });
+        
+        if (response.success) {
+            alert('Checked in successfully!');
+            await dashboardManager.loadAttendanceContent();
+        }
+    } catch (error) {
+        alert('Failed to check in: ' + (error.message || 'Error'));
+    }
+}
+
+async function checkOutAttendance() {
+    try {
+        const response = await window.apiService.post('/attendance/checkout');
+        
+        if (response.success) {
+            alert('Checked out successfully!');
+            await dashboardManager.loadAttendanceContent();
+        }
+    } catch (error) {
+        alert('Failed to check out: ' + (error.message || 'Error'));
+    }
+}
+
+function filterAttendance() {
+    const statusFilter = document.getElementById('attendanceStatusFilter')?.value || '';
+    const locationFilter = document.getElementById('locationFilter')?.value || '';
+    const startDate = document.getElementById('startDate')?.value || '';
+    const endDate = document.getElementById('endDate')?.value || '';
+    
+    const rows = document.querySelectorAll('#attendanceTableBody tr');
+    rows.forEach(row => {
+        if (row.cells.length < 7) return; // Skip header/loading rows
+        
+        const status = row.cells[5]?.textContent.trim() || '';
+        const location = row.cells[6]?.textContent.trim() || '';
+        const dateText = row.cells[0]?.textContent || '';
+        const rowDate = new Date(dateText);
+        
+        const statusMatch = !statusFilter || status === statusFilter;
+        const locationMatch = !locationFilter || location === locationFilter;
+        const dateMatch = (!startDate || rowDate >= new Date(startDate)) && 
+                         (!endDate || rowDate <= new Date(endDate));
+        
+        row.style.display = (statusMatch && locationMatch && dateMatch) ? '' : 'none';
+    });
+}
+
+async function viewAttendanceDetails(attendanceId) {
+    try {
+        const response = await window.apiService.get(`/attendance/${attendanceId}`);
+        const attendance = response.data;
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-container attendance-details-modal">
+                <div class="modal-header">
+                    <h3>Attendance Details</h3>
+                    <button class="modal-close" onclick="closeTopModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="attendance-detail-section">
+                        <h4>${attendance.employee?.name || 'Employee'}</h4>
+                        <p class="attendance-date">${new Date(attendance.date).toLocaleDateString()}</p>
+                    </div>
+                    
+                    <div class="attendance-detail-grid">
+                        <div class="detail-item">
+                            <label>Check In:</label>
+                            <span>${attendance.checkIn ? new Date(attendance.checkIn).toLocaleString() : 'Not checked in'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Check Out:</label>
+                            <span>${attendance.checkOut ? new Date(attendance.checkOut).toLocaleString() : 'Not checked out'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Status:</label>
+                            <span class="status status-${attendance.status?.toLowerCase()}">${attendance.status}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Location:</label>
+                            <span class="location-badge location-${attendance.location?.toLowerCase().replace(' ', '-')}">${attendance.location}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Working Hours:</label>
+                            <span>${attendance.workingHours || 0} hours</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Overtime:</label>
+                            <span>${attendance.overtime || 0} hours</span>
+                        </div>
+                    </div>
+                    
+                    ${attendance.notes ? `
+                        <div class="attendance-notes">
+                            <h4>Notes</h4>
+                            <p>${attendance.notes}</p>
+                        </div>
+                    ` : ''}
+                    
+                    ${attendance.approvedBy ? `
+                        <div class="approval-info">
+                            <h4>Approval</h4>
+                            <p>Approved by: ${attendance.approvedBy?.name || 'Unknown'}</p>
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeTopModal()">Close</button>
+                    ${authManager.getCurrentRole()?.toLowerCase() !== 'employee' ? `
+                        <button class="btn btn-primary" onclick="editAttendance('${attendanceId}')">Edit Record</button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    } catch (error) {
+        alert('Failed to load attendance details: ' + (error.message || 'Error'));
+    }
+}
+
+async function editAttendance(attendanceId) {
+    try {
+        const response = await window.apiService.get(`/attendance/${attendanceId}`);
+        const attendance = response.data;
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-container">
+                <div class="modal-header">
+                    <h3>Edit Attendance Record</h3>
+                    <button class="modal-close" onclick="closeTopModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="editAttendanceForm">
+                        <div class="form-group">
+                            <label>Employee:</label>
+                            <input type="text" value="${attendance.employee?.name || ''}" readonly class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label>Date:</label>
+                            <input type="date" id="editDate" value="${new Date(attendance.date).toISOString().split('T')[0]}" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Check In:</label>
+                            <input type="datetime-local" id="editCheckIn" value="${attendance.checkIn ? new Date(attendance.checkIn).toISOString().slice(0, 16) : ''}" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label>Check Out:</label>
+                            <input type="datetime-local" id="editCheckOut" value="${attendance.checkOut ? new Date(attendance.checkOut).toISOString().slice(0, 16) : ''}" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label>Status:</label>
+                            <select id="editStatus" class="form-control" required>
+                                <option value="Present" ${attendance.status === 'Present' ? 'selected' : ''}>Present</option>
+                                <option value="Late" ${attendance.status === 'Late' ? 'selected' : ''}>Late</option>
+                                <option value="Absent" ${attendance.status === 'Absent' ? 'selected' : ''}>Absent</option>
+                                <option value="Half Day" ${attendance.status === 'Half Day' ? 'selected' : ''}>Half Day</option>
+                                <option value="On Leave" ${attendance.status === 'On Leave' ? 'selected' : ''}>On Leave</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Location:</label>
+                            <select id="editLocation" class="form-control" required>
+                                <option value="Office" ${attendance.location === 'Office' ? 'selected' : ''}>Office</option>
+                                <option value="Remote" ${attendance.location === 'Remote' ? 'selected' : ''}>Remote</option>
+                                <option value="Client Site" ${attendance.location === 'Client Site' ? 'selected' : ''}>Client Site</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Notes:</label>
+                            <textarea id="editNotes" class="form-control" rows="3">${attendance.notes || ''}</textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeTopModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="submitEditAttendance('${attendanceId}')">Update Record</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    } catch (error) {
+        alert('Failed to load attendance for editing: ' + (error.message || 'Error'));
+    }
+}
+
+async function submitEditAttendance(attendanceId) {
+    try {
+        const formData = {
+            date: document.getElementById('editDate').value,
+            checkIn: document.getElementById('editCheckIn').value,
+            checkOut: document.getElementById('editCheckOut').value,
+            status: document.getElementById('editStatus').value,
+            location: document.getElementById('editLocation').value,
+            notes: document.getElementById('editNotes').value
+        };
+
+        await window.apiService.put(`/attendance/${attendanceId}`, formData);
+        closeTopModal();
+        alert('Attendance record updated successfully!');
+        await dashboardManager.loadAttendanceContent();
+    } catch (error) {
+        alert('Failed to update attendance: ' + (error.message || 'Error'));
+    }
+}
+
+async function deleteAttendance(attendanceId, employeeName) {
+    if (!confirm(`Delete attendance record for "${employeeName}"?`)) return;
+    
+    try {
+        await window.apiService.delete(`/attendance/${attendanceId}`);
+        alert('Attendance record deleted successfully!');
+        await dashboardManager.loadAttendanceContent();
+    } catch (error) {
+        alert('Failed to delete attendance: ' + (error.message || 'Error'));
+    }
+}
+
+function openAddAttendanceModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>Add Attendance Record</h3>
+                <button class="modal-close" onclick="closeTopModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addAttendanceForm">
+                    <div class="form-group">
+                        <label>Employee:</label>
+                        <select id="addEmployee" class="form-control" required>
+                            <option value="">Select Employee</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Date:</label>
+                        <input type="date" id="addDate" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Check In:</label>
+                        <input type="datetime-local" id="addCheckIn" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Check Out:</label>
+                        <input type="datetime-local" id="addCheckOut" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>Status:</label>
+                        <select id="addStatus" class="form-control" required>
+                            <option value="Present">Present</option>
+                            <option value="Late">Late</option>
+                            <option value="Absent">Absent</option>
+                            <option value="Half Day">Half Day</option>
+                            <option value="On Leave">On Leave</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location:</label>
+                        <select id="addLocation" class="form-control" required>
+                            <option value="Office">Office</option>
+                            <option value="Remote">Remote</option>
+                            <option value="Client Site">Client Site</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Notes:</label>
+                        <textarea id="addNotes" class="form-control" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTopModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitAddAttendance()">Add Record</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // Load employees for dropdown
+    loadEmployeesForAttendance();
+    
+    // Set default date to today
+    document.getElementById('addDate').value = new Date().toISOString().split('T')[0];
+}
+
+async function loadEmployeesForAttendance() {
+    try {
+        const response = await window.apiService.get('/users?role=employee');
+        const employees = (response.data && response.data.data) || response.data || [];
+        
+        const select = document.getElementById('addEmployee');
+        if (select) {
+            select.innerHTML = '<option value="">Select Employee</option>' +
+                employees.map(emp => `<option value="${emp._id}">${emp.name} (${emp.employeeId})</option>`).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load employees:', error);
+    }
+}
+
+async function submitAddAttendance() {
+    try {
+        const formData = {
+            employee: document.getElementById('addEmployee').value,
+            date: document.getElementById('addDate').value,
+            checkIn: document.getElementById('addCheckIn').value,
+            checkOut: document.getElementById('addCheckOut').value,
+            status: document.getElementById('addStatus').value,
+            location: document.getElementById('addLocation').value,
+            notes: document.getElementById('addNotes').value
+        };
+
+        if (!formData.employee) {
+            alert('Please select an employee');
+            return;
+        }
+
+        await window.apiService.post('/attendance', formData);
+        closeTopModal();
+        alert('Attendance record added successfully!');
+        await dashboardManager.loadAttendanceContent();
+    } catch (error) {
+        alert('Failed to add attendance: ' + (error.message || 'Error'));
     }
 }
 
