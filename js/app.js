@@ -696,9 +696,6 @@ class DashboardManager {
                 case 'leaves':
                     this.loadLeavesContent();
                     break;
-                case 'attendance':
-                    this.loadAttendanceContent();
-                    break;
                 case 'payroll':
                     this.loadPayrollContent();
                     break;

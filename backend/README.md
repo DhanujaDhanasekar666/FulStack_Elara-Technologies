@@ -345,17 +345,6 @@ pm2 monit
 pm2 logs elara-api
 ```
 
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 5000
-CMD ["npm", "start"]
-```
-
 ## 🔄 API Versioning
 
 Current version: `v1`
@@ -384,17 +373,6 @@ Future versions will be accessible via:
 ## 📄 License
 
 MIT License - See LICENSE file for details
-
-## 👥 Support
-
-For support, email support@elaratech.com or create an issue in the repository.
-
-## 🔗 Related Documentation
-
-- [Frontend Documentation](../README.md)
-- [API Documentation](./docs/api.md) (coming soon)
-- [Database Schema](./docs/schema.md) (coming soon)
-
 
 
 
