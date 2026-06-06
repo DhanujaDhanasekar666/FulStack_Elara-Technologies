@@ -2581,7 +2581,8 @@ footer {
 /* Company Overview Styles */
 .company-overview {
     padding: 1.5rem;
-    height: calc(100vh - 120px);
+    min-height: calc(100vh - 120px);
+    height: auto;
     display: flex;
     flex-direction: column;
 }
@@ -2616,7 +2617,7 @@ footer {
 
 .charts-row {
     display: grid;
-    grid-template-columns: 1.2fr 1fr;
+    grid-template-columns: 1fr 1.2fr;
     gap: 2.5rem;
     flex: 1;
 }
@@ -2645,14 +2646,13 @@ footer {
 }
 
 .chart-wrapper {
-    flex: 1;
     position: relative;
-    min-height: 350px;
+    height: 320px;
+    width: 100%;
 }
 
 .chart-wrapper canvas {
-    width: 100% !important;
-    height: 100% !important;
+    display: block;
 }
 
 .loading {

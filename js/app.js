@@ -3355,7 +3355,7 @@ class DashboardManager {
     // Simple chart functions
     createSimpleDepartmentChart(departmentStats) {
         console.log('📊 Creating department chart...');
-        
+
         const canvas = document.getElementById('deptChart');
         if (!canvas) {
             console.error('❌ Canvas not found');
@@ -3367,6 +3367,10 @@ class DashboardManager {
         const data = Object.values(departmentStats);
         const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
+        const isLight = document.body.classList.contains('light-mode');
+        const textColor = isLight ? '#475569' : '#f1f5f9';
+        const borderColor = isLight ? '#ffffff' : '#1e293b';
+
         try {
             new Chart(ctx, {
                 type: 'doughnut',
@@ -3376,18 +3380,18 @@ class DashboardManager {
                         data: data,
                         backgroundColor: colors.slice(0, labels.length),
                         borderWidth: 2,
-                        borderColor: '#fff'
+                        borderColor: borderColor
                     }]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
+                    maintainAspectRatio: true,
                     plugins: {
                         legend: {
                             position: 'bottom',
                             labels: {
-                                color: '#374151',
-                                font: { size: 12 }
+                                color: textColor,
+                                font: { size: 12, weight: '500' }
                             }
                         }
                     }
@@ -3401,7 +3405,7 @@ class DashboardManager {
 
     createSimpleGrowthChart(employees) {
         console.log('📈 Creating growth chart...');
-        
+
         const canvas = document.getElementById('growthChart');
         if (!canvas) {
             console.error('❌ Canvas not found');
@@ -3412,11 +3416,15 @@ class DashboardManager {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const growthData = [];
         let count = Math.max(1, employees.length - 5);
-        
+
         for (let i = 0; i < 12; i++) {
             count += Math.floor(Math.random() * 3);
             growthData.push(count);
         }
+
+        const isLight = document.body.classList.contains('light-mode');
+        const textColor = isLight ? '#475569' : '#f1f5f9';
+        const gridColor = isLight ? '#e2e8f0' : '#334155';
 
         try {
             new Chart(ctx, {
@@ -3427,7 +3435,7 @@ class DashboardManager {
                         label: 'Employee Count',
                         data: growthData,
                         borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        backgroundColor: isLight ? 'rgba(59, 130, 246, 0.05)' : 'rgba(59, 130, 246, 0.15)',
                         borderWidth: 3,
                         fill: true,
                         tension: 0.4
@@ -3438,18 +3446,21 @@ class DashboardManager {
                     maintainAspectRatio: false,
                     plugins: {
                         legend: {
-                            labels: { color: '#374151' }
+                            labels: {
+                                color: textColor,
+                                font: { size: 12, weight: '500' }
+                            }
                         }
                     },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            ticks: { color: '#6b7280' },
-                            grid: { color: '#e5e7eb' }
+                            ticks: { color: textColor },
+                            grid: { color: gridColor }
                         },
                         x: {
-                            ticks: { color: '#6b7280' },
-                            grid: { color: '#e5e7eb' }
+                            ticks: { color: textColor },
+                            grid: { color: gridColor }
                         }
                     }
                 }
@@ -3459,7 +3470,6 @@ class DashboardManager {
             console.error('❌ Chart error:', error);
         }
     }
-
     // Helper method to add delays between API calls
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));

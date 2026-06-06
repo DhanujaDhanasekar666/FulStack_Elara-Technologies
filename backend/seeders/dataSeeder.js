@@ -80,7 +80,7 @@ const sampleData = {
 // Connect to MongoDB
 const connectDB = async () => {
     try {
-        await mongoose.connect(process.env.MONGO_URI);
+        await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/elara_technologies');
         console.log('✅ MongoDB Connected for seeding');
     } catch (error) {
         console.error('❌ MongoDB connection failed:', error.message);
@@ -120,12 +120,9 @@ const seedUsers = async () => {
                 continue;
             }
             
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(userData.password, salt);
-            
             const newUser = await User.create({
                 ...userData,
-                password: hashedPassword
+                password: userData.password
             });
             
             users.push(newUser);
@@ -143,27 +140,60 @@ const seedUsers = async () => {
 const seedEmployees = async (users) => {
     try {
         const employees = [];
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash('Employee@123456', salt);
+
         for (const empData of sampleData.employees) {
-            // Check if employee already exists
-            const existingEmployee = await Employee.findOne({ email: empData.email });
-            if (existingEmployee) {
-                console.log(`👨‍💼 Employee ${empData.email} already exists, skipping`);
-                employees.push(existingEmployee);
-                continue;
+            // Find or create corresponding user first
+            let user = await User.findOne({ email: empData.email });
+            if (!user) {
+                // Determine role
+                let role = 'employee';
+                if (empData.position.toLowerCase().includes('manager')) {
+                    role = 'manager';
+                } else if (empData.department.toLowerCase() === 'hr') {
+                    role = 'hr';
+                }
+
+                user = await User.create({
+                    name: empData.name,
+                    email: empData.email,
+                    password: hashedPassword,
+                    role: role,
+                    department: empData.department,
+                    position: empData.position,
+                    employeeId: empData.employeeId,
+                    phone: empData.phone,
+                    status: empData.status === 'active' ? 'Active' : 'Resigned',
+                    joiningDate: new Date(empData.joinDate)
+                });
+                console.log(`✅ Created associated user for employee: ${empData.email}`);
             }
-            
-            // Find corresponding user
-            const user = users.find(u => u.email === empData.email);
-            
-            const newEmployee = await Employee.create({
-                ...empData,
-                user: user ? user._id : null
-            });
-            
-            employees.push(newEmployee);
-            console.log(`✅ Created employee: ${empData.email}`);
+
+            // Check if employee already exists
+            let employee = await Employee.findOne({ userId: user._id });
+            if (!employee) {
+                employee = await Employee.create({
+                    userId: user._id,
+                    skills: ['JavaScript', 'HTML', 'CSS', 'Project Management'],
+                    education: [{
+                        degree: 'Bachelor of Science',
+                        institution: 'State University',
+                        yearOfCompletion: 2020,
+                        grade: 'A'
+                    }]
+                });
+                console.log(`✅ Created employee profile for: ${empData.email}`);
+            } else {
+                console.log(`👨‍💼 Employee profile for ${empData.email} already exists, skipping`);
+            }
+
+            const employeeWithSalary = employee.toObject();
+            employeeWithSalary.salary = empData.salary;
+            employeeWithSalary.employeeId = empData.employeeId;
+            employees.push(employeeWithSalary);
         }
-        
+
         console.log('👨‍💼 Employees seeding completed');
         return employees;
     } catch (error) {
@@ -174,7 +204,28 @@ const seedEmployees = async (users) => {
 // Seed Projects
 const seedProjects = async () => {
     try {
-        await Project.insertMany(sampleData.projects);
+        const manager = await User.findOne({ role: 'manager' }) || await User.findOne({ role: 'ceo' });
+        const projects = sampleData.projects.map(proj => {
+            let status = 'Planning';
+            if (proj.status === 'active') status = 'In Progress';
+            else if (proj.status === 'planning') status = 'Planning';
+            else if (proj.status === 'completed') status = 'Completed';
+            
+            return {
+                name: proj.name,
+                description: proj.description || proj.name,
+                department: proj.department,
+                status: status,
+                startDate: new Date(proj.startDate),
+                endDate: new Date(proj.endDate),
+                budget: {
+                    allocated: proj.budget || 50000,
+                    spent: 0
+                },
+                projectManager: manager ? manager._id : null
+            };
+        });
+        await Project.insertMany(projects);
         console.log('📋 Projects seeded successfully');
     } catch (error) {
         console.error('❌ Error seeding projects:', error.message);
@@ -184,7 +235,40 @@ const seedProjects = async () => {
 // Seed Tasks
 const seedTasks = async () => {
     try {
-        await Task.insertMany(sampleData.tasks);
+        const manager = await User.findOne({ role: 'manager' }) || await User.findOne({ role: 'ceo' });
+        const employee = await User.findOne({ role: 'employee' });
+        
+        const tasks = [];
+        for (const taskData of sampleData.tasks) {
+            // Find assignee user by name
+            const assigneeUser = await User.findOne({ name: taskData.assignee }) || employee;
+            
+            let status = 'Pending';
+            if (taskData.status === 'in-progress') status = 'In Progress';
+            else if (taskData.status === 'completed') status = 'Completed';
+            else if (taskData.status === 'pending') status = 'Pending';
+            
+            let priority = 'Medium';
+            if (taskData.priority === 'high') priority = 'High';
+            else if (taskData.priority === 'medium') priority = 'Medium';
+            else if (taskData.priority === 'low') priority = 'Low';
+            else if (taskData.priority === 'urgent') priority = 'Urgent';
+
+            // Find project if any
+            const project = await Project.findOne({ name: taskData.project });
+
+            tasks.push({
+                title: taskData.title,
+                description: taskData.description || taskData.title,
+                projectId: project ? project._id : null,
+                assignedTo: assigneeUser ? assigneeUser._id : null,
+                assignedBy: manager ? manager._id : null,
+                status,
+                priority,
+                dueDate: new Date(taskData.dueDate)
+            });
+        }
+        await Task.insertMany(tasks);
         console.log('✅ Tasks seeded successfully');
     } catch (error) {
         console.error('❌ Error seeding tasks:', error.message);
@@ -197,16 +281,26 @@ const seedLeaveRequests = async (employees) => {
         const leaveRequests = [];
         for (const leaveData of sampleData.leaveRequests) {
             const employee = employees.find(emp => emp.employeeId === leaveData.employeeId);
+            if (!employee) continue;
+
+            let type = 'Personal';
+            if (leaveData.type === 'vacation') type = 'Vacation';
+            else if (leaveData.type === 'sick') type = 'Sick Leave';
+            else if (leaveData.type === 'personal') type = 'Personal';
+
+            let status = 'Pending';
+            if (leaveData.status === 'approved') status = 'Approved';
+            else if (leaveData.status === 'rejected') status = 'Rejected';
+            else if (leaveData.status === 'pending') status = 'Pending';
             
             leaveRequests.push({
-                employee: employee ? employee._id : null,
-                type: leaveData.type,
+                employee: employee.userId,
+                type: type,
                 startDate: new Date(leaveData.startDate),
                 endDate: new Date(leaveData.endDate),
-                days: leaveData.days,
                 reason: leaveData.reason,
-                status: leaveData.status,
-                appliedDate: new Date(leaveData.appliedDate)
+                status: status,
+                numberOfDays: leaveData.days
             });
         }
         
@@ -253,25 +347,46 @@ const seedPayroll = async (employees) => {
     try {
         const payrollData = [];
         const currentDate = new Date();
-        const currentMonth = currentDate.getMonth();
+        const currentMonth = currentDate.getMonth() + 1; // 1-12
         const currentYear = currentDate.getFullYear();
         
         for (const employee of employees) {
             if (employee.salary) {
                 const baseSalary = employee.salary;
                 const bonus = Math.floor(Math.random() * 5000); // Random bonus 0-5000
-                const deductions = Math.floor(baseSalary * 0.1); // 10% deductions (tax, insurance, etc.)
-                const netPay = baseSalary + bonus - deductions;
+                const tax = Math.floor(baseSalary * 0.08); // 8% tax
+                const insurance = Math.floor(baseSalary * 0.02); // 2% insurance
+                const deductionsTotal = tax + insurance;
+                const netPay = baseSalary + bonus - deductionsTotal;
                 
                 payrollData.push({
-                    employee: employee._id,
-                    period: `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`,
-                    baseSalary,
-                    bonus,
-                    deductions,
+                    employee: employee.userId, // User ObjectId
+                    period: {
+                        month: currentMonth,
+                        year: currentYear
+                    },
+                    salary: {
+                        baseSalary,
+                        bonus,
+                        overtime: 0,
+                        allowances: {
+                            houseRent: 0,
+                            transport: 0,
+                            medical: 0,
+                            other: 0
+                        }
+                    },
+                    deductions: {
+                        tax,
+                        insurance,
+                        providentFund: 0,
+                        loan: 0,
+                        other: 0
+                    },
                     netPay,
-                    status: 'processed',
-                    processedDate: new Date()
+                    status: 'Processed',
+                    processedAt: new Date(),
+                    paymentMethod: 'Bank Transfer'
                 });
             }
         }
@@ -298,10 +413,10 @@ const seedAttendance = async (employees) => {
             if (date.getDay() === 0 || date.getDay() === 6) continue;
             
             for (const employee of employees) {
-                const statuses = ['present', 'absent', 'late', 'half-day'];
-                const weights = [0.8, 0.05, 0.1, 0.05]; // 80% present, 5% absent, 10% late, 5% half-day
+                const statuses = ['Present', 'Late', 'Half Day'];
+                const weights = [0.85, 0.1, 0.05]; // 85% present, 10% late, 5% half-day
                 
-                let status = 'present';
+                let status = 'Present';
                 const random = Math.random();
                 let cumulative = 0;
                 
@@ -313,31 +428,30 @@ const seedAttendance = async (employees) => {
                     }
                 }
                 
-                let checkIn = null;
-                let checkOut = null;
+                const baseCheckIn = new Date(date);
+                baseCheckIn.setHours(9, 0, 0, 0); // 9:00 AM base time
                 
-                if (status !== 'absent') {
-                    const baseCheckIn = new Date(date);
-                    baseCheckIn.setHours(9, 0, 0, 0); // 9:00 AM base time
-                    
-                    if (status === 'late') {
-                        baseCheckIn.setMinutes(baseCheckIn.getMinutes() + Math.floor(Math.random() * 60) + 15); // 15-75 minutes late
-                    }
-                    
-                    checkIn = baseCheckIn;
-                    
-                    const baseCheckOut = new Date(checkIn);
-                    baseCheckOut.setHours(baseCheckOut.getHours() + (status === 'half-day' ? 4 : 8)); // 4 or 8 hours
-                    checkOut = baseCheckOut;
+                if (status === 'Late') {
+                    baseCheckIn.setMinutes(baseCheckIn.getMinutes() + Math.floor(Math.random() * 60) + 15); // 15-75 minutes late
                 }
                 
+                const checkIn = baseCheckIn;
+                
+                const baseCheckOut = new Date(checkIn);
+                baseCheckOut.setHours(baseCheckOut.getHours() + (status === 'Half Day' ? 4 : 8)); // 4 or 8 hours
+                const checkOut = baseCheckOut;
+                
+                const diff = checkOut.getTime() - checkIn.getTime();
+                const workingHours = Math.round((diff / (1000 * 60 * 60)) * 100) / 100;
+                
                 attendanceData.push({
-                    employee: employee._id,
+                    employee: employee.userId, // User ObjectId
                     date: new Date(date),
                     status,
                     checkIn,
                     checkOut,
-                    hoursWorked: checkIn && checkOut ? Math.round((checkOut - checkIn) / (1000 * 60 * 60) * 100) / 100 : 0
+                    workingHours,
+                    location: 'Office'
                 });
             }
         }

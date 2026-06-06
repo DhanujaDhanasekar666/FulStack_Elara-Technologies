@@ -1,5 +1,5 @@
 /* Responsive Design */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
     .dashboard-grid {
         grid-template-columns: 1fr;
     }
@@ -142,7 +142,7 @@
 }
 
 /* Employee Management Responsive */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
     .employee-header {
         flex-direction: column;
         gap: 1rem;

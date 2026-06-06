@@ -35,6 +35,19 @@ const userSchema = new mongoose.Schema({
         minlength: 6,
         select: false
     },
+    department: {
+        type: String,
+        required: [true, 'Please add a department']
+    },
+    position: {
+        type: String,
+        required: [true, 'Please add a position']
+    },
+    employeeId: {
+        type: String,
+        unique: true,
+        required: true
+    },
     resetPasswordToken: String,
     resetPasswordExpire: Date,
     createdAt: {
@@ -134,6 +147,10 @@ const createTestAccounts = async () => {
                 position: 'Software Engineer'
             }
         ];
+
+        // Clear existing users to start clean and prevent unique index duplicate errors
+        console.log('🧹 Clearing existing users to ensure clean seeding...');
+        await User.deleteMany({});
 
         // Upsert users
         for (const account of testAccounts) {

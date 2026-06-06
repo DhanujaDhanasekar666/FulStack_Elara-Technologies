@@ -108,7 +108,7 @@ ProjectSchema.index({ projectManager: 1 });
 
 // Virtual for team size
 ProjectSchema.virtual('teamSize').get(function() {
-    return this.teamMembers.length;
+    return this.teamMembers ? this.teamMembers.length : 0;
 });
 
 export default mongoose.model('Project', ProjectSchema);
